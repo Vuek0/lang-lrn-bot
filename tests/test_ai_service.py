@@ -24,7 +24,7 @@ class FakeVoice:
     def __init__(self, name, result="", error=None):
         self.name, self.result, self.error = name, result, error
 
-    async def transcribe(self, audio, mime_type, hint):
+    async def transcribe(self, audio, mime_type, hint, language=None):
         if self.error:
             raise self.error
         return self.result

@@ -182,3 +182,13 @@ class PersonaArt(Base):
     pinned: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     banned: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class TtsCache(Base):
+    """Spoken audio already uploaded to Telegram: key = sha1(voice + rate + text) → voice message file_id."""
+
+    __tablename__ = "tts_cache"
+
+    key: Mapped[str] = mapped_column(String(40), primary_key=True)
+    file_id: Mapped[str] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)

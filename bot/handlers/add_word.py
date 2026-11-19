@@ -16,6 +16,8 @@ from bot.ai.service import AIService
 from bot.ai.schemas import AIError, Sense, WordAnalysis
 from bot.db.models import Deck, Persona, User
 from bot.db.repo import Repo
+from bot.handlers import review
+from bot.handlers.speech import speech_buttons
 from bot.handlers.talk import answer_as_persona, looks_like_word
 from bot.images import arts
 from bot.persona.card import PersonaCard, phrase
@@ -107,7 +109,14 @@ async def on_text(
         await message.answer(texts.TOO_LONG)
         return
     await state.clear()
-    status = await message.answer(phrase(persona, "thinking", texts.THINKING))
+    if memory.waiting_answer(user.id) and len(text) <= MAX_INPUT_CHARS:  # an answer to the open review card?
+        status = await message.answer("Проверяю… 🔎")
+        if await review.answer_card(message, text, False, ai, repo, user, deck, persona, memory):
+            await status.delete()
+            return
+        await status.edit_text(phrase(persona, "thinking", texts.THINKING))
+    else:
+        status = await message.answer(phrase(persona, "thinking", texts.THINKING))
     await dispatch(
         status, text, state, ai, repo, user, deck, persona, persona_row, memory, replied=replied_text(message)
     )
@@ -137,8 +146,15 @@ async def on_voice(
     if buffer is None:
         await status.edit_text("Не получилось скачать голосовое 😿")
         return
+    # An answer to the open review card is expected in a known language: tell speech recognition first
+    waiting = memory.waiting_answer(user.id)
+    card = await repo.get_card(waiting[0]) if waiting else None
+    expect = review.answer_language(card, deck, user) if card else deck.target_lang
+    other = user.native_lang if expect == deck.target_lang else deck.target_lang
     try:
-        heard = await ai.transcribe(buffer.read(), media.mime_type or "audio/ogg", deck.target_lang, user.native_lang)
+        # In practice mode or when answering a card the language is known: tell recognition not to guess
+        force = card is not None or user.practice_mode
+        heard = await ai.transcribe(buffer.read(), media.mime_type or "audio/ogg", expect, other, force)
     except AIError:
         log.exception("transcription failed")
         await status.edit_text(texts.AI_ERROR)
@@ -146,6 +162,11 @@ async def on_voice(
     if not heard:
         await status.edit_text("Не расслышала 😿 Попробуй ещё раз, чуть чётче.")
         return
+    if card is not None:
+        await status.edit_text(f"🎧 Расслышала: <b>{esc(heard)}</b>\nПроверяю… 🔎")
+        if await review.answer_card(message, heard, True, ai, repo, user, deck, persona, memory):
+            await status.delete()
+            return
     await dispatch(
         status, heard, state, ai, repo, user, deck, persona, persona_row, memory,
         heard=True, replied=replied_text(message),
@@ -393,7 +414,8 @@ async def on_confirm(
         word = await repo.add_word(deck.id, draft, now)
         await state.clear()
         await message.edit_text(
-            texts.render_word(draft) + f"\n\n{esc(phrase(persona, 'saved', texts.SAVED))} Повторим в /review"
+            texts.render_word(draft) + f"\n\n{esc(phrase(persona, 'saved', texts.SAVED))} Повторим в /review",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[speech_buttons(word)]),
         )
         # A sticker only for something worth celebrating, not for every saved word.
         if milestone := await word_milestone(repo, deck.id, word.id, user.timezone, now):

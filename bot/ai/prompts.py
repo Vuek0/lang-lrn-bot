@@ -279,3 +279,40 @@ The user is NOT in the chat right now: your message starts the conversation (don
 Write ONE short message (1-3 sentences) in {n}, fully in character, you may add one {t} phrase with a translation.
 {_grammar_gender_rule(gender, n)}
 Return ONLY JSON: {{"text": "<the message>", "emotion": "happy" | "excited" | "sad" | "surprised" | "proud"}}"""
+
+
+# --- checking an answer to a review card ---
+
+
+def _learner(gender: str) -> str:
+    return {"male": "a man (masculine forms)", "female": "a woman (feminine forms)"}.get(
+        gender, "someone whose gender you don't know (use gender-neutral phrasing)"
+    )
+
+
+def answer_check_prompt(
+    question: str, expected: str, answer: str, voice: bool, answer_lang: str, target: str, native: str,
+    persona_style: str, user_gender: str = "",
+) -> str:
+    t, n, a = get_lang(target).english, get_lang(native).english, get_lang(answer_lang).english
+    how = (
+        f"by VOICE: this is a speech-recognition transcript of what they said in {a}"
+        if voice else f"typed in {a}"
+    )
+    return f"""Flashcard review for a learner of {t} (native language: {n}).
+The card asks: {question}
+Correct answer: {expected}
+The learner answered ({how}): "{answer}"
+
+Judge the answer:
+- "correct": the right word or meaning; close synonyms, diminutives and tiny typos are fine.
+- "almost": the right idea with a mistake (wrong article or gender, wrong ending, spelling slip, only part of it).
+- "wrong": incorrect.
+- "not_answer": clearly not an attempt to answer this card (a question, a request, unrelated chat).
+For a voice answer in {t}: if the transcript differs in a way that suggests a pronunciation problem
+(a sound misheard), say kindly which sound to work on.
+"comment": 1-2 short sentences in {n}, in this character's voice ({persona_style}): praise, or what exactly was wrong.
+"rating": suggested review grade — 1 wrong, 2 almost, 3 correct (you can't see how easy it was: never suggest 4).
+Address the learner as {_learner(user_gender)} (grammatical gender in {n}). Don't start with your own name.
+
+Return ONLY JSON: {{"verdict": "correct" | "almost" | "wrong" | "not_answer", "rating": 1-4, "comment": "<text>"}}"""

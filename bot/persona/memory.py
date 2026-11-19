@@ -10,6 +10,7 @@ from datetime import datetime
 MAX_MESSAGES = 12
 MAX_REMEMBERED_REPLIES = 200
 CONVERSATION_WINDOW = 15 * 60  # seconds after the persona's last reply when we're "still talking"
+ANSWER_WINDOW = 10 * 60  # a shown review card accepts a typed/spoken answer for this long
 
 
 class ChatMemory:
@@ -19,6 +20,7 @@ class ChatMemory:
         self._last_reply_at: dict[int, float] = {}
         self._loaded: set[int] = set()  # users whose history was loaded from the DB after a restart
         self._previous_active: dict[int, datetime | None] = {}
+        self._waiting: dict[int, tuple[int, int, int, float]] = {}
 
     # --- persistence: the DB keeps the history across restarts and deploys ---
 
@@ -63,6 +65,21 @@ class ChatMemory:
         """Did the persona talk to this user recently? Then short messages are probably answers, not words."""
         last = self._last_reply_at.get(user_id)
         return last is not None and time.monotonic() - last < window
+
+    # --- a review card waiting for a typed or spoken answer ---
+
+    def await_answer(self, user_id: int, card_id: int, chat_id: int, message_id: int) -> None:
+        self._waiting[user_id] = (card_id, chat_id, message_id, time.monotonic())
+
+    def waiting_answer(self, user_id: int, window: float = ANSWER_WINDOW) -> tuple[int, int, int] | None:
+        """(card_id, chat_id, message_id) of the card shown last, if it's still waiting for an answer."""
+        waiting = self._waiting.get(user_id)
+        if waiting is None or time.monotonic() - waiting[3] > window:
+            return None
+        return waiting[:3]
+
+    def stop_waiting(self, user_id: int) -> None:
+        self._waiting.pop(user_id, None)
 
     def end_conversation(self, user_id: int) -> None:
         """The user switched to adding words: keep the history, but stop treating messages as answers."""

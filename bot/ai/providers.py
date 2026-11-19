@@ -44,7 +44,7 @@ class TextProvider(Protocol):
 class Transcriber(Protocol):
     name: str
 
-    async def transcribe(self, audio: bytes, mime_type: str, hint: str) -> str: ...
+    async def transcribe(self, audio: bytes, mime_type: str, hint: str, language: str | None = None) -> str: ...
 
 
 # --- OpenAI-compatible APIs: OpenAI itself, Groq, and most other providers ---
@@ -71,10 +71,12 @@ class OpenAICompatibleTranscriber:
         self.client = client
         self.model = model
 
-    async def transcribe(self, audio: bytes, mime_type: str, hint: str) -> str:
+    async def transcribe(self, audio: bytes, mime_type: str, hint: str, language: str | None = None) -> str:
+        """language: ISO code when we know what's spoken — then Whisper doesn't have to guess."""
         ext = _AUDIO_EXT.get(mime_type, "ogg")
+        extra = {"language": language} if language else {}
         result = await self.client.audio.transcriptions.create(
-            model=self.model, file=(f"voice.{ext}", audio, mime_type), prompt=hint
+            model=self.model, file=(f"voice.{ext}", audio, mime_type), prompt=hint, **extra
         )
         return result.text or ""
 
@@ -147,10 +149,13 @@ class Gemini:
         ]
         return await self._generate(contents, "application/json" if json_mode else "text/plain", system)
 
-    async def transcribe(self, audio: bytes, mime_type: str, hint: str) -> str:
+    async def transcribe(self, audio: bytes, mime_type: str, hint: str, language: str | None = None) -> str:
+        languages = f"The speaker speaks the language with code «{language}». " if language else (
+            f"The speaker may use any of the languages in this sample: «{hint}». "
+        )
         instruction = (
-            "Transcribe this audio exactly as spoken. The speaker may use any of the languages in this sample: "
-            f"«{hint}». Write the words in the language actually spoken — never translate. "
+            "Transcribe this audio exactly as spoken. " + languages
+            + "Write the words in the language actually spoken — never translate. "
             "Return only the transcript, without quotes or comments. If nothing intelligible is said, return nothing."
         )
         text = await self._generate([types.Part.from_bytes(data=audio, mime_type=mime_type), instruction], "text/plain")

@@ -6,7 +6,19 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot import srs
-from bot.db.models import Card, ChatMessage, Deck, Meta, Persona, PersonaArt, ReviewLog, User, UserFact, Word
+from bot.db.models import (
+    Card,
+    ChatMessage,
+    Deck,
+    Meta,
+    Persona,
+    PersonaArt,
+    ReviewLog,
+    TtsCache,
+    User,
+    UserFact,
+    Word,
+)
 from bot.langs import get_lang
 from bot.persona.card import DEFAULT_CARD
 
@@ -163,6 +175,31 @@ class Repo:
         if art is None or await self.get_persona(user, art.persona_id) is None:
             return None
         return art
+
+    # --- pronunciation cache ---
+
+    async def tts_get(self, key: str) -> str | None:
+        row = await self.s.get(TtsCache, key)
+        return row.file_id if row else None
+
+    async def tts_put(self, key: str, file_id: str) -> None:
+        row = await self.s.get(TtsCache, key)
+        if row is None:
+            await self._insert_ignoring_conflict(TtsCache(key=key, file_id=file_id))
+        else:
+            row.file_id = file_id
+            await self.s.flush()
+
+    async def tts_forget(self, key: str) -> None:
+        await self.s.execute(delete(TtsCache).where(TtsCache.key == key))
+
+    async def word_of_user(self, user: User, word_id: int) -> Word | None:
+        """A word from any of this user's decks (None for someone else's)."""
+        word = await self.s.get(Word, word_id)
+        if word is None:
+            return None
+        deck = await self.s.get(Deck, word.deck_id)
+        return word if deck is not None and deck.user_id == user.id else None
 
     # --- memory: facts about the user and chat history ---
 

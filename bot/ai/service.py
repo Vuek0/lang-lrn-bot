@@ -71,6 +71,16 @@ class Nudge:
 
 
 EMOTIONS = ("happy", "excited", "sad", "surprised", "proud")
+VERDICTS = ("correct", "almost", "wrong", "not_answer")
+
+
+@dataclass
+class AnswerCheck:
+    """How a typed/spoken answer to a review card went."""
+
+    verdict: str  # correct / almost / wrong / not_answer
+    rating: int  # suggested grade 1-4
+    comment: str = ""
 
 
 class AIService:
@@ -125,12 +135,17 @@ class AIService:
 
     # --- voice ---
 
-    async def transcribe(self, audio: bytes, mime_type: str, target: str, native: str = "ru") -> str:
+    async def transcribe(
+        self, audio: bytes, mime_type: str, target: str, native: str = "ru", force: bool = False
+    ) -> str:
+        """target is the expected language. force=True when it's certain (practice mode, a card's answer):
+        then recognition doesn't guess — short phrases with an accent were heard as the wrong language."""
         hint = prompts.transcription_hint(target, native)
+        language = target if force else None
         failures = []
         for transcriber in self.transcribers:
             try:
-                text = await transcriber.transcribe(audio, mime_type, hint)
+                text = await transcriber.transcribe(audio, mime_type, hint, language)
                 # Speech-to-text likes to add punctuation: "La finestra." → "La finestra"
                 return text.strip().rstrip(".!…").strip()
             except Exception as exc:
@@ -211,6 +226,29 @@ class AIService:
             )
 
         return await self._ask(messages, parse)
+
+    async def check_answer(
+        self, persona: PersonaCard, question: str, expected: str, answer: str, voice: bool,
+        answer_lang: str, target: str, native: str, user_gender: str = "",
+    ) -> AnswerCheck:
+        style = persona.speech_style or persona.personality
+        prompt = prompts.answer_check_prompt(
+            question, expected, answer, voice, answer_lang, target, native, f"{persona.name}: {style}"[:300],
+            user_gender,
+        )
+
+        def parse(raw: str) -> AnswerCheck:
+            data = parse_json_object(raw)
+            verdict = str(data.get("verdict") or "").strip().lower()
+            if verdict not in VERDICTS:
+                raise AIError(f"unknown verdict {verdict!r}")
+            try:
+                rating = min(4, max(1, int(data.get("rating") or 0)))
+            except (TypeError, ValueError):
+                rating = {"correct": 3, "almost": 2}.get(verdict, 1)
+            return AnswerCheck(verdict, rating, str(data.get("comment") or "").strip())
+
+        return await self._ask(_user(prompt), parse)
 
     async def nudge(self, card: PersonaCard, kind: str, target: str, native: str, context: str = "") -> Nudge:
         """A short in-character message the persona sends by itself: kind = review / miss_you / backup."""

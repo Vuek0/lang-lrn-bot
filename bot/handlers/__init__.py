@@ -1,6 +1,6 @@
 from aiogram import Router
 
-from bot.handlers import add_word, common, persona, review, settings, stickers, talk, words
+from bot.handlers import add_word, common, persona, review, settings, speech, stickers, talk, words
 
 
 def all_routers() -> list[Router]:
@@ -13,6 +13,7 @@ def all_routers() -> list[Router]:
         words.router,
         settings.router,
         stickers.router,
+        speech.router,
         talk.router,
         add_word.router,
         common.fallback_router,
