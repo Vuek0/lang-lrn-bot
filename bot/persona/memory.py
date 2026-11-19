@@ -1,0 +1,61 @@
+"""Short-term memory in RAM (long-term memory comes in a later stage):
+- the last messages of the chat with the persona;
+- for ➕ buttons under persona replies: what each word meant in that reply.
+"""
+
+import time
+from collections import OrderedDict, defaultdict, deque
+
+MAX_MESSAGES = 12
+MAX_REMEMBERED_REPLIES = 200
+CONVERSATION_WINDOW = 15 * 60  # seconds after the persona's last reply when we're "still talking"
+
+
+class ChatMemory:
+    def __init__(self, max_messages: int = MAX_MESSAGES):
+        self._history: dict[int, deque[dict[str, str]]] = defaultdict(lambda: deque(maxlen=max_messages))
+        self._word_hints: OrderedDict[tuple[int, int], tuple[dict[str, str], str]] = OrderedDict()
+        self._last_reply_at: dict[int, float] = {}
+
+    def history(self, user_id: int) -> list[dict[str, str]]:
+        return list(self._history[user_id])
+
+    def add(self, user_id: int, role: str, content: str) -> None:
+        self._history[user_id].append({"role": role, "content": content})
+        if role == "assistant":
+            self._last_reply_at[user_id] = time.monotonic()
+
+    def clear(self, user_id: int) -> None:
+        self._history.pop(user_id, None)
+        self._last_reply_at.pop(user_id, None)
+
+    def last_reply(self, user_id: int) -> str:
+        """The persona's latest message, or "" if none."""
+        for message in reversed(self._history[user_id]):
+            if message["role"] == "assistant":
+                return message["content"]
+        return ""
+
+    def in_conversation(self, user_id: int, window: float = CONVERSATION_WINDOW) -> bool:
+        """Did the persona talk to this user recently? Then short messages are probably answers, not words."""
+        last = self._last_reply_at.get(user_id)
+        return last is not None and time.monotonic() - last < window
+
+    def end_conversation(self, user_id: int) -> None:
+        """The user switched to adding words: keep the history, but stop treating messages as answers."""
+        self._last_reply_at.pop(user_id, None)
+
+    def knows(self, user_id: int, text: str) -> bool:
+        return any(m["content"] == text for m in self._history[user_id])
+
+    def remember_words(self, chat_id: int, message_id: int, meanings: dict[str, str], context: str) -> None:
+        if not meanings:
+            return
+        self._word_hints[(chat_id, message_id)] = (meanings, context)
+        while len(self._word_hints) > MAX_REMEMBERED_REPLIES:
+            self._word_hints.popitem(last=False)
+
+    def word_hint(self, chat_id: int, message_id: int, word: str) -> tuple[str, str]:
+        """(meaning in that reply, the reply text) — empty strings if forgotten (e.g. after a restart)."""
+        meanings, context = self._word_hints.get((chat_id, message_id), ({}, ""))
+        return meanings.get(word, ""), context if word in meanings else ""
