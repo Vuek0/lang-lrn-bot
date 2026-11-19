@@ -3,7 +3,7 @@ pydantic-settings>=2.6
 SQLAlchemy[asyncio]>=2.0.36
 aiosqlite>=0.20
 google-genai>=1.40
-openai>=1.60
+openai>=3.51.0
 fsrs>=6,<7
 tzdata
 alembic>=1.14
