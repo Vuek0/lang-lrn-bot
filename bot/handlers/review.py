@@ -72,6 +72,24 @@ async def cmd_review(
     await send_next_card(message, repo, user, deck, persona, persona_row)
 
 
+@router.callback_query(F.data == "rv:start")
+async def on_start_review(
+    callback: CallbackQuery,
+    state: FSMContext,
+    repo: Repo,
+    user: User,
+    deck: Deck,
+    persona: PersonaCard,
+    persona_row: Persona,
+) -> None:
+    """«📚 Начать повторение» under a reminder."""
+    await callback.answer()
+    if isinstance(callback.message, Message):
+        await state.clear()
+        await callback.message.edit_reply_markup(reply_markup=None)
+        await send_next_card(callback.message, repo, user, deck, persona, persona_row)
+
+
 @router.callback_query(F.data.startswith("show:"))
 async def on_show(callback: CallbackQuery, repo: Repo, user: User, deck: Deck) -> None:
     card = await repo.get_card(int((callback.data or "").split(":")[1]))

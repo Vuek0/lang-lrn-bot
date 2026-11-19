@@ -204,7 +204,9 @@ def _grammar_gender_rule(gender: str, n: str) -> str:
     )
 
 
-def persona_system_prompt(card_json: str, target: str, native: str, practice: bool, gender: str = "") -> str:
+def persona_system_prompt(
+    card_json: str, target: str, native: str, practice: bool, gender: str = "", context: str = ""
+) -> str:
     t, n = get_lang(target).english, get_lang(native).english
     if practice:
         mode = (
@@ -221,6 +223,8 @@ Stay fully in character: personality, way of speaking, catchphrases, how you add
 
 Character card:
 {card_json}
+
+{context}
 
 {mode}
 
@@ -241,8 +245,37 @@ Rules:
 - You CAN send stickers of yourself in this chat: the bot attaches one matching your "emotion".
   Set "sticker": true when the user asks for a sticker/picture of you, or when the moment is really emotional.
   Never say that you can't send stickers or pictures.
+- Long-term memory: in "remember" put NEW facts about the user worth keeping for weeks (what they study or do,
+  hobbies, likes, goals, plans, important events, why they learn {t}), short, third person, in {n}.
+  Only facts not already in your memory; usually the list is empty. Never store secrets like passwords.
+  If they tell you their name, put it in "user_name"; if their grammatical gender is clear, set "user_gender".
 
 Return ONLY JSON: {{"reply": "<your message to the user>",
   "words": [{{"word": "<{t} word or short phrase>", "meaning": "<short {n} meaning in this context>"}}],
   "emotion": "none" | "happy" | "excited" | "sad" | "surprised" | "proud",
-  "sticker": true | false}}"""
+  "sticker": true | false,
+  "remember": ["<new fact about the user>"],
+  "user_name": "<their name if they just told it, else empty>",
+  "user_gender": "male" | "female" | ""}}"""
+
+
+def nudge_prompt(card_json: str, target: str, native: str, gender: str, kind: str, context: str) -> str:
+    """A message the persona sends on its own: a reminder, "I miss you", the daily backup."""
+    t, n = get_lang(target).english, get_lang(native).english
+    situations = {
+        "review": "It's time for today's review: some cards are waiting. Invite the user to review, playfully.",
+        "miss_you": "The user hasn't come for a while. Tell them you miss them, in character, and invite them back "
+                    "for a quick review. Warm, never guilt-tripping.",
+        "backup": "You just made the daily backup of all the words you study together and are sending the file "
+                  "(it's attached to your message). Mention it in character: their words are safe with you.",
+    }
+    return f"""You are role-playing this character, the user's personal {t} tutor in a Telegram bot:
+{card_json}
+
+{context}
+
+Situation: {situations[kind]}
+The user is NOT in the chat right now: your message starts the conversation (don't say they came back).
+Write ONE short message (1-3 sentences) in {n}, fully in character, you may add one {t} phrase with a translation.
+{_grammar_gender_rule(gender, n)}
+Return ONLY JSON: {{"text": "<the message>", "emotion": "happy" | "excited" | "sad" | "surprised" | "proud"}}"""

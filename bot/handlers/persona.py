@@ -15,6 +15,7 @@ from bot.db.models import Deck, Persona, User
 from bot.images import arts
 from bot.db.repo import Repo
 from bot.persona.card import PersonaCard, phrase, render_card
+from bot.handlers.talk import reset_conversation
 from bot.persona.memory import ChatMemory
 from bot.utils import esc
 
@@ -103,7 +104,7 @@ async def on_menu(
         await message.answer(render_card(card), reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
     elif action == "use":
         await repo.activate_persona(user, persona.id)
-        memory.clear(user.id)
+        await reset_conversation(memory, repo, user.id)
         await greet(message, repo, persona, card)
     elif action == "edit":
         await state.set_state(PersonaFlow.revise)
@@ -139,7 +140,7 @@ async def on_menu(
         await message.answer("Пришли картинку (как фото) — сделаю её аватаркой 🖼\n/cancel — отмена")
     elif action == "del":
         if await repo.delete_persona(user, persona.id):
-            memory.clear(user.id)
+            await reset_conversation(memory, repo, user.id)
             await message.edit_text(f"Удалила персонажа <b>{esc(card.name)}</b> 🗑")
         else:
             await message.answer("Это единственный персонаж — сначала создай другого: /persona")
@@ -213,7 +214,7 @@ async def on_preview_action(
         else:
             saved = await repo.add_persona(user, card.model_dump(), activate=True)
         await state.clear()
-        memory.clear(user.id)
+        await reset_conversation(memory, repo, user.id)
         await message.edit_reply_markup(reply_markup=None)
         if saved.avatar_file_id:
             await greet(message, repo, saved, card)

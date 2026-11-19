@@ -5,6 +5,7 @@
 
 import time
 from collections import OrderedDict, defaultdict, deque
+from datetime import datetime
 
 MAX_MESSAGES = 12
 MAX_REMEMBERED_REPLIES = 200
@@ -16,6 +17,28 @@ class ChatMemory:
         self._history: dict[int, deque[dict[str, str]]] = defaultdict(lambda: deque(maxlen=max_messages))
         self._word_hints: OrderedDict[tuple[int, int], tuple[dict[str, str], str]] = OrderedDict()
         self._last_reply_at: dict[int, float] = {}
+        self._loaded: set[int] = set()  # users whose history was loaded from the DB after a restart
+        self._previous_active: dict[int, datetime | None] = {}
+
+    # --- persistence: the DB keeps the history across restarts and deploys ---
+
+    def needs_loading(self, user_id: int) -> bool:
+        return user_id not in self._loaded
+
+    def load(self, user_id: int, messages: list[dict[str, str]]) -> None:
+        """Fill from the DB once per process (without opening a "conversation" window)."""
+        self._loaded.add(user_id)
+        history = self._history[user_id]
+        history.clear()
+        history.extend(messages[-(history.maxlen or len(messages)):])
+
+    # --- when was the user active before this message (for the persona's mood) ---
+
+    def set_previous_active(self, user_id: int, when: "datetime | None") -> None:
+        self._previous_active[user_id] = when
+
+    def previous_active(self, user_id: int) -> "datetime | None":
+        return self._previous_active.get(user_id)
 
     def history(self, user_id: int) -> list[dict[str, str]]:
         return list(self._history[user_id])

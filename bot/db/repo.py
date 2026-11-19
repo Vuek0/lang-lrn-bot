@@ -6,7 +6,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot import srs
-from bot.db.models import Card, Deck, Persona, PersonaArt, ReviewLog, User, Word
+from bot.db.models import Card, ChatMessage, Deck, Meta, Persona, PersonaArt, ReviewLog, User, UserFact, Word
 from bot.langs import get_lang
 from bot.persona.card import DEFAULT_CARD
 
@@ -14,6 +14,9 @@ from bot.persona.card import DEFAULT_CARD
 REVERSE_DELAY = timedelta(days=1)
 # Like Anki's "learn ahead": cards due within this window are shown when nothing else is due.
 LEARN_AHEAD = timedelta(minutes=20)
+
+MAX_FACTS = 40  # facts about the user the persona keeps
+MAX_CHAT = 200  # chat messages kept in the DB (the prompt uses only the last few)
 
 DRAFT_FIELDS = ("lemma", "display", "reading", "pos", "translations", "example", "example_translation", "notes")
 
@@ -116,18 +119,126 @@ class Repo:
         await self.s.flush()
 
     async def cached_arts(self, persona_id: int, emotion: str) -> list[PersonaArt]:
+        """Usable pictures for an emotion (banned ones excluded)."""
         rows = await self.s.scalars(
-            select(PersonaArt).where(PersonaArt.persona_id == persona_id, PersonaArt.emotion == emotion)
+            select(PersonaArt)
+            .where(PersonaArt.persona_id == persona_id, PersonaArt.emotion == emotion, PersonaArt.banned.is_(False))
+            .order_by(PersonaArt.id)
         )
         return list(rows)
+
+    async def known_post_ids(self, persona_id: int, emotion: str) -> set[str]:
+        """All arts ever saved for the emotion, banned included: never download those again."""
+        rows = await self.s.scalars(
+            select(PersonaArt.post_id).where(PersonaArt.persona_id == persona_id, PersonaArt.emotion == emotion)
+        )
+        return set(rows)
 
     async def delete_art(self, art_id: int) -> None:
         await self.s.execute(delete(PersonaArt).where(PersonaArt.id == art_id))
 
-    async def add_art(self, persona_id: int, emotion: str, post_id: str, file_id: str, credit: str) -> None:
-        await self._insert_ignoring_conflict(
-            PersonaArt(persona_id=persona_id, emotion=emotion, post_id=post_id, file_id=file_id, credit=credit)
+    async def add_art(
+        self, persona_id: int, emotion: str, post_id: str, file_id: str, credit: str, pinned: bool = False
+    ) -> PersonaArt:
+        """Save a picture (or update it if this post is already saved). Returns the row."""
+        art = await self.s.scalar(
+            select(PersonaArt).where(PersonaArt.persona_id == persona_id, PersonaArt.post_id == post_id)
         )
+        if art is None:
+            await self._insert_ignoring_conflict(PersonaArt(
+                persona_id=persona_id, emotion=emotion, post_id=post_id, file_id=file_id, credit=credit, pinned=pinned
+            ))
+            art = await self.s.scalar(
+                select(PersonaArt).where(PersonaArt.persona_id == persona_id, PersonaArt.post_id == post_id)
+            )
+        else:
+            art.file_id, art.banned = file_id, False
+            art.pinned = art.pinned or pinned
+            await self.s.flush()
+        assert art is not None
+        return art
+
+    async def get_art(self, user: User, art_id: int) -> PersonaArt | None:
+        """An art of one of this user's personas."""
+        art = await self.s.get(PersonaArt, art_id)
+        if art is None or await self.get_persona(user, art.persona_id) is None:
+            return None
+        return art
+
+    # --- memory: facts about the user and chat history ---
+
+    async def facts(self, user_id: int) -> list[str]:
+        rows = await self.s.scalars(select(UserFact.fact).where(UserFact.user_id == user_id).order_by(UserFact.id))
+        return list(rows)
+
+    async def add_facts(self, user_id: int, facts: list[str], now: datetime, keep: int = MAX_FACTS) -> list[str]:
+        """Remember new facts (skipping ones already known); oldest are forgotten beyond `keep`. Returns added."""
+        known = {_key(f) for f in await self.facts(user_id)}
+        added = []
+        for fact in facts:
+            fact = fact.strip()[:300]
+            if fact and _key(fact) not in known:
+                known.add(_key(fact))
+                self.s.add(UserFact(user_id=user_id, fact=fact, created_at=now))
+                added.append(fact)
+        await self.s.flush()
+        ids = list(await self.s.scalars(
+            select(UserFact.id).where(UserFact.user_id == user_id).order_by(UserFact.id.desc()).offset(keep)
+        ))
+        if ids:
+            await self.s.execute(delete(UserFact).where(UserFact.id.in_(ids)))
+        return added
+
+    async def forget_facts(self, user_id: int) -> None:
+        await self.s.execute(delete(UserFact).where(UserFact.user_id == user_id))
+
+    async def add_chat(self, user_id: int, role: str, content: str, now: datetime, keep: int = MAX_CHAT) -> None:
+        self.s.add(ChatMessage(user_id=user_id, role=role, content=content, created_at=now))
+        await self.s.flush()
+        ids = list(await self.s.scalars(
+            select(ChatMessage.id).where(ChatMessage.user_id == user_id).order_by(ChatMessage.id.desc()).offset(keep)
+        ))
+        if ids:
+            await self.s.execute(delete(ChatMessage).where(ChatMessage.id.in_(ids)))
+
+    async def recent_chat(self, user_id: int, limit: int) -> list[dict[str, str]]:
+        rows = list(await self.s.scalars(
+            select(ChatMessage).where(ChatMessage.user_id == user_id).order_by(ChatMessage.id.desc()).limit(limit)
+        ))
+        return [{"role": m.role, "content": m.content} for m in reversed(rows)]
+
+    async def clear_chat(self, user_id: int) -> None:
+        await self.s.execute(delete(ChatMessage).where(ChatMessage.user_id == user_id))
+
+    # --- activity, reminders, bot-wide state ---
+
+    async def all_users(self) -> list[User]:
+        return list(await self.s.scalars(select(User)))
+
+    async def meta_get(self, key: str) -> str:
+        row = await self.s.get(Meta, key)
+        return row.value if row else ""
+
+    async def meta_set(self, key: str, value: str) -> None:
+        row = await self.s.get(Meta, key)
+        if row is None:
+            self.s.add(Meta(key=key, value=value))
+        else:
+            row.value = value
+        await self.s.flush()
+
+    async def hard_words(self, deck_id: int, since: datetime, limit: int = 5) -> list[str]:
+        """Words forgotten most often lately ("Снова" in reviews)."""
+        stmt = (
+            select(Word.display, func.count(ReviewLog.id).label("misses"))
+            .join(Card, ReviewLog.card_id == Card.id)
+            .join(Word, Card.word_id == Word.id)
+            .where(Word.deck_id == deck_id, ReviewLog.rating == 1, ReviewLog.reviewed_at >= since)
+            .group_by(Word.id, Word.display)
+            .order_by(func.count(ReviewLog.id).desc())
+            .limit(limit)
+        )
+        return [row.display for row in await self.s.execute(stmt)]
 
     async def _insert_ignoring_conflict(self, obj: object) -> None:
         try:
@@ -256,3 +367,7 @@ class Repo:
 
 def _empty(field: str) -> Any:
     return [] if field == "translations" else ""
+
+
+def _key(text: str) -> str:
+    return " ".join(text.lower().split()).rstrip(".!")

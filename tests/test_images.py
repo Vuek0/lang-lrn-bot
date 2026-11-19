@@ -309,3 +309,58 @@ async def test_same_sticker_is_not_sent_twice_in_a_row(repo, board, monkeypatch)
         assert await arts.send_reaction(message, repo, persona, MEGUMIN, "review_done", force=True)
     sent = message.stickers
     assert all(a != b for a, b in zip(sent, sent[1:])), sent
+
+
+# --- the user's own sticker sets (/stickers) ---
+
+from bot.handlers.stickers import art_keyboard  # noqa: E402
+
+
+async def test_my_set_wins_and_banned_never_come_back(repo, board, monkeypatch):
+    monkeypatch.setattr(arts, "STYLE", "sticker")
+    _, persona = await _persona(repo)
+    persona.art_tag = "megumin"
+    auto = await repo.add_art(persona.id, "st:happy", "d100", "auto-file", "")
+    mine = await repo.add_art(persona.id, "st:happy", "tg:abc:happy", "my-file", "", pinned=True)
+    message = FakeMessage()
+    for _ in range(4):
+        assert await arts.send_reaction(message, repo, persona, MEGUMIN, "review_done", force=True)
+    assert set(message.stickers) == {"my-file"}  # only my set, even though another art is cached
+
+    mine.pinned = False
+    mine.banned = True  # 👎
+    assert [a.id for a in await repo.cached_arts(persona.id, "st:happy")] == [auto.id]
+    assert "tg:abc:happy" in await repo.known_post_ids(persona.id, "st:happy")
+    board["arts"] = [Art(post_id="tg:abc:happy", image_url="u", page_url="p")]  # the banned one shows up again
+    message = FakeMessage()
+    for _ in range(3):
+        await arts.send_reaction(message, repo, persona, MEGUMIN, "review_done", force=True)
+    assert "my-file" not in message.stickers
+
+
+async def test_forwarded_sticker_works_for_a_persona_without_arts(repo, monkeypatch):
+    monkeypatch.setattr(arts, "STYLE", "sticker")
+    _, roxy = await _persona(repo, DEFAULT_CARD)  # original character: no art tag, no avatar
+    await repo.add_art(roxy.id, "st:sad", "tg:xyz:sad", "forwarded-file", "", pinned=True)
+    message = FakeMessage()
+    assert await arts.send_reaction(message, repo, roxy, DEFAULT_CARD, "wrong", force=True)
+    assert message.stickers == ["forwarded-file"]
+
+
+async def test_add_art_updates_and_ownership_is_checked(repo):
+    user, persona = await _persona(repo)
+    art = await repo.add_art(persona.id, "st:happy", "d1", "f1", "")
+    art.banned = True
+    again = await repo.add_art(persona.id, "st:happy", "d1", "f2", "", pinned=True)
+    assert again.id == art.id and again.file_id == "f2" and again.pinned and not again.banned
+    assert (await repo.get_art(user, art.id)).id == art.id
+    stranger, _ = await repo.ensure_user(2, native_lang="ru", timezone="Asia/Tashkent", target_lang="it")
+    assert await repo.get_art(stranger, art.id) is None
+
+
+def test_art_keyboard():
+    art = SimpleNamespace(id=7, pinned=False)
+    row = art_keyboard(art).inline_keyboard[0]
+    assert [b.callback_data for b in row] == ["st:p:7", "st:b:7"] and row[0].text == "➕ В набор"
+    art.pinned = True
+    assert art_keyboard(art).inline_keyboard[0][0].text == "✅ В наборе"

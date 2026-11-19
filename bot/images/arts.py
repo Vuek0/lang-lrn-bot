@@ -26,11 +26,13 @@ STYLE = "sticker"
 # Words get a picture only on milestones (always), not on every save; questions never get one.
 CHANCE = {"review_done": 1.0, "milestone": 1.0, "wrong": 0.25, "correct": 0.12, "chat": 0.35}
 STICKER_CHANCE = {"review_done": 1.0, "milestone": 1.0, "wrong": 0.35, "correct": 0.25, "chat": 0.65}
-EVENT_EMOTION = {"review_done": "happy", "milestone": "excited", "wrong": "sad", "correct": "happy", "chat": "happy"}
+EVENT_EMOTION = {
+    "review_done": "happy", "milestone": "excited", "wrong": "sad", "correct": "happy", "chat": "happy", "nudge": "happy",
+}
 
 # Personas without arts (original characters) use their avatar as the one sticker — but not on every
 # review card, where the same picture again and again would get boring.
-AVATAR_EVENTS = {"chat", "milestone", "review_done"}
+AVATAR_EVENTS = {"chat", "milestone", "review_done", "nudge"}
 AVATAR_STICKER = "st:avatar"
 
 _last_sent: dict[int, str] = {}  # persona id → post_id of the last reaction picture
@@ -89,13 +91,20 @@ async def send_reaction(
     if not force and random.random() > chance:
         return False
     try:
+        emotion = emotion or EVENT_EMOTION.get(event, "happy")
+        cache_key = f"st:{emotion}" if stickers else emotion  # stickers and photos have separate file_ids
+
+        # The user's own set for this emotion (/stickers, forwarded stickers) wins over automatic picks
+        if stickers and (my_set := [a for a in await repo.cached_arts(persona.id, cache_key) if a.pinned]):
+            pool = [a for a in my_set if a.post_id != _last_sent.get(persona.id)] or my_set
+            if await _send_cached(message, repo, random.choice(pool), text_html, stickers):
+                return True
+
         tag = await resolve_tag(persona, card)
         if not tag:  # an original character without arts: the avatar can still be a sticker
             if event in AVATAR_EVENTS:
                 return await _avatar_reaction(message, repo, persona, text_html, stickers)
             return False
-        emotion = emotion or EVENT_EMOTION.get(event, "happy")
-        cache_key = f"st:{emotion}" if stickers else emotion  # stickers and photos have separate file_ids
         cached = await repo.cached_arts(persona.id, cache_key)
 
         # Reuse a cached picture only if there's one besides the last sent (no same sticker twice in a row)
@@ -105,7 +114,7 @@ async def send_reaction(
                 return True
             cached = await repo.cached_arts(persona.id, cache_key)  # a dead file_id was dropped
 
-        known = {a.post_id for a in cached}
+        known = await repo.known_post_ids(persona.id, cache_key)  # banned ones too: never again
         # Emotion searches can't also ask for "solo" (2-tag limit), so fetch more and filter on our side.
         found = await booru.search_arts(tag, emotion, limit=100, solo_only=True)
         fresh = [a for a in found if a.post_id not in known]
@@ -198,3 +207,35 @@ async def _send(message: Message, picture: str | BufferedInputFile, text_html: s
         return sent.sticker.file_id
     sent = await message.answer_photo(picture, caption=caption(text_html))
     return sent.photo[-1].file_id
+
+
+# --- /stickers gallery ---
+
+STICKER_EMOTIONS = {
+    "happy": "😊 Радость",
+    "excited": "🤩 Восторг",
+    "sad": "😢 Грусть",
+    "surprised": "😮 Удивление",
+    "proud": "😏 Гордость",
+}
+
+
+async def fresh_sticker_candidates(
+    message: Message, repo: Repo, persona: Persona, card: PersonaCard, emotion: str, count: int
+) -> list[tuple[Message, PersonaArt]]:
+    """Upload `count` new stickers of the persona for an emotion (as real stickers, so the user sees
+    exactly how they look). Returns (sent message, row) pairs; the caller attaches the ➕/👎 buttons."""
+    tag = await resolve_tag(persona, card)
+    if not tag:
+        return []
+    cache_key = f"st:{emotion}"
+    known = await repo.known_post_ids(persona.id, cache_key)
+    found = [a for a in await booru.search_arts(tag, emotion, limit=100, solo_only=True) if a.post_id not in known]
+    result = []
+    for art, data in await booru.download_many(found[: count * 2], count):
+        if (sticker := to_sticker(data)) is None:
+            continue
+        sent = await message.answer_sticker(BufferedInputFile(sticker, filename=f"{art.post_id}.webp"))
+        row = await repo.add_art(persona.id, cache_key, art.post_id, sent.sticker.file_id, art.credit)
+        result.append((sent, row))
+    return result

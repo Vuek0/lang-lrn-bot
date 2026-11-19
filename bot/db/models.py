@@ -13,6 +13,7 @@ from sqlalchemy import (
     TypeDecorator,
     UniqueConstraint,
     false,
+    true,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -49,6 +50,48 @@ class User(Base):
     active_deck_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     practice_mode: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+    # What the persona learned about the user (stage C: memory)
+    name: Mapped[str] = mapped_column(String(100), default="", server_default="")
+    gender: Mapped[str] = mapped_column(String(10), default="", server_default="")  # male / female / ""
+
+    # Activity and reminders
+    last_active_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    reminders_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
+    reminder_hours: Mapped[str] = mapped_column(String(50), default="12,20", server_default="12,20")  # local hours
+    last_reminded_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+
+
+class UserFact(Base):
+    """Something the persona remembers about the user: "studies at a university", "loves pasta"…"""
+
+    __tablename__ = "user_facts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    fact: Mapped[str] = mapped_column(String(300))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class ChatMessage(Base):
+    """Recent conversation with the persona, so it survives restarts and deploys."""
+
+    __tablename__ = "chat_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    role: Mapped[str] = mapped_column(String(10))  # user / assistant
+    content: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+
+class Meta(Base):
+    """Small key/value store for bot-wide state (e.g. when the last backup was sent)."""
+
+    __tablename__ = "meta"
+
+    key: Mapped[str] = mapped_column(String(50), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, default="")
 
 
 class Deck(Base):
@@ -119,7 +162,12 @@ class Persona(Base):
 
 
 class PersonaArt(Base):
-    """Arts already sent to Telegram: reused by file_id instead of downloading again."""
+    """Arts already sent to Telegram: reused by file_id instead of downloading again.
+
+    The user can curate them in /stickers: `pinned` ones form "my set" for the emotion (then only they
+    are used), `banned` ones are never sent again (the row stays so the art isn't downloaded again).
+    Stickers the user forwarded have post_id "tg:<file_unique_id>:<emotion>".
+    """
 
     __tablename__ = "persona_arts"
     __table_args__ = (UniqueConstraint("persona_id", "post_id"),)
@@ -127,7 +175,9 @@ class PersonaArt(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     persona_id: Mapped[int] = mapped_column(ForeignKey("personas.id"), index=True)
     emotion: Mapped[str] = mapped_column(String(20))
-    post_id: Mapped[str] = mapped_column(String(40))
+    post_id: Mapped[str] = mapped_column(String(80))
     file_id: Mapped[str] = mapped_column(String(200))
     credit: Mapped[str] = mapped_column(Text, default="")
+    pinned: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    banned: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)

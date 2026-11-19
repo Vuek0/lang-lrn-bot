@@ -13,6 +13,7 @@ from bot.db.session import make_engine, make_sessionmaker, run_migrations
 from bot.handlers import all_routers
 from bot.handlers.errors import on_error
 from bot.images import arts
+from bot.jobs.scheduler import Scheduler
 from bot.middlewares import DbMiddleware, OwnerOnlyMiddleware
 from bot.persona.memory import ChatMemory
 
@@ -24,6 +25,10 @@ COMMANDS = [
     BotCommand(command="practice", description="Разговорная практика вкл/выкл"),
     BotCommand(command="lang", description="Сменить язык"),
     BotCommand(command="delete", description="Удалить слово"),
+    BotCommand(command="stickers", description="Стикеры персонажа"),
+    BotCommand(command="remind", description="Напоминания"),
+    BotCommand(command="memory", description="Что персонаж помнит обо мне"),
+    BotCommand(command="backup", description="Бэкап базы сейчас"),
     BotCommand(command="help", description="Помощь"),
 ]
 
@@ -47,7 +52,12 @@ async def main() -> None:
     await bot.set_my_commands(COMMANDS)
     try:
         ai = build_ai(settings)
-        await dp.start_polling(bot, ai=ai, memory=ChatMemory())
+        scheduler = Scheduler(bot, sessionmaker, ai, settings)
+        jobs = asyncio.create_task(scheduler.run())  # reminders, "I miss you", daily backup
+        try:
+            await dp.start_polling(bot, ai=ai, memory=ChatMemory(), scheduler=scheduler)
+        finally:
+            jobs.cancel()
     finally:
         await engine.dispose()
 

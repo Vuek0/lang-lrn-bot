@@ -57,6 +57,17 @@ class PersonaReply:
     words: list["SuggestedWord"] = field(default_factory=list)
     emotion: str = "none"  # the feeling for a sticker: happy / excited / sad / surprised / proud
     sticker: bool = False  # the persona wants to send a sticker now (asked for one, or a big moment)
+    remember: list[str] = field(default_factory=list)  # new long-term facts about the user
+    user_name: str = ""
+    user_gender: str = ""  # male / female / ""
+
+
+@dataclass
+class Nudge:
+    """A message the persona sends on its own (reminder, "I miss you", backup)."""
+
+    text: str
+    emotion: str = "happy"
 
 
 EMOTIONS = ("happy", "excited", "sad", "surprised", "proud")
@@ -175,9 +186,11 @@ class AIService:
         target: str,
         native: str,
         practice: bool = False,
+        context: str = "",
     ) -> PersonaReply:
+        """context: memory about the user, learning progress and mood (bot/persona/context.py)."""
         card_json = card.model_dump_json(exclude={"phrases"})
-        system = prompts.persona_system_prompt(card_json, target, native, practice, card.gender)
+        system = prompts.persona_system_prompt(card_json, target, native, practice, card.gender, context)
         messages = [{"role": "system", "content": system}, *history, {"role": "user", "content": text}]
 
         def parse(raw: str) -> PersonaReply:
@@ -188,9 +201,31 @@ class AIService:
             emotion = str(data.get("emotion") or "none").strip().lower()
             words = parse_suggested_words(data.get("words"))
             sticker = data.get("sticker") is True or str(data.get("sticker")).lower() == "true"
-            return PersonaReply(reply, words, emotion if emotion in EMOTIONS else "none", sticker)
+            remember = [str(f).strip() for f in data.get("remember") or [] if str(f).strip()][:5]
+            gender = str(data.get("user_gender") or "").strip().lower()
+            return PersonaReply(
+                reply, words, emotion if emotion in EMOTIONS else "none", sticker,
+                remember=remember,
+                user_name=str(data.get("user_name") or "").strip()[:100],
+                user_gender=gender if gender in ("male", "female") else "",
+            )
 
         return await self._ask(messages, parse)
+
+    async def nudge(self, card: PersonaCard, kind: str, target: str, native: str, context: str = "") -> Nudge:
+        """A short in-character message the persona sends by itself: kind = review / miss_you / backup."""
+        card_json = card.model_dump_json(exclude={"phrases"})
+        prompt = prompts.nudge_prompt(card_json, target, native, card.gender, kind, context)
+
+        def parse(raw: str) -> Nudge:
+            data = parse_json_object(raw)
+            text = str(data.get("text") or "").strip()
+            if not text:
+                raise AIError("empty nudge")
+            emotion = str(data.get("emotion") or "happy").strip().lower()
+            return Nudge(text, emotion if emotion in EMOTIONS else "happy")
+
+        return await self._ask(_user(prompt), parse)
 
 
 def _user(prompt: str) -> Messages:

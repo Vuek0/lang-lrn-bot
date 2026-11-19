@@ -2,6 +2,7 @@
 
 import logging
 import re
+from datetime import datetime
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -10,14 +11,15 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 
 from bot import texts
 from bot.ai.schemas import AIError
-from bot.ai.service import AIService, SuggestedWord
+from bot.ai.service import AIService, PersonaReply, SuggestedWord
 from bot.db.models import Deck, Persona, User
 from bot.db.repo import Repo
 from bot.images import arts
 from bot.langs import get_lang
 from bot.persona.card import PersonaCard, markdown_to_html
+from bot.persona.context import context_block, snapshot
 from bot.persona.memory import ChatMemory
-from bot.utils import norm
+from bot.utils import norm, utcnow
 
 log = logging.getLogger(__name__)
 router = Router(name="talk")
@@ -110,9 +112,11 @@ async def answer_as_persona(
     history = memory.history(user.id)
     if replied and not _mentioned(replied, history):
         history = [*history, {"role": "assistant", "content": replied}]
+    now = utcnow()
+    snap = await snapshot(repo, user, deck, now, memory.previous_active(user.id))
     try:
         reply = await ai.persona_reply(
-            persona, history, text, deck.target_lang, user.native_lang, user.practice_mode
+            persona, history, text, deck.target_lang, user.native_lang, user.practice_mode, context_block(snap)
         )
     except AIError:
         log.exception("persona reply failed")
@@ -120,6 +124,7 @@ async def answer_as_persona(
         return
     memory.add(user.id, "user", text)
     memory.add(user.id, "assistant", reply.text)
+    await remember_from_reply(repo, user, text, reply, now)
     body = reply.text if len(reply.text) <= MAX_REPLY_CHARS else reply.text[:MAX_REPLY_CHARS] + "…"
     new, known = await split_known(repo, deck.id, reply.words)
     # ➕ buttons only carry the word (64-byte limit): remember its meaning and the reply for when one is pressed
@@ -136,13 +141,32 @@ async def answer_as_persona(
         await arts.send_reaction(status, repo, persona_row, persona, "chat", emotion=reply.emotion)
 
 
+async def remember_from_reply(repo: Repo, user: User, text: str, reply: PersonaReply, now: datetime) -> None:
+    """Long-term memory: keep the conversation, new facts, the user's name and gender."""
+    await repo.add_chat(user.id, "user", text, now)
+    await repo.add_chat(user.id, "assistant", reply.text, now)
+    if reply.remember:
+        added = await repo.add_facts(user.id, reply.remember, now)
+        if added:
+            log.info("remembered about the user: %s", added)
+    if reply.user_name:
+        user.name = reply.user_name
+    if reply.user_gender:
+        user.gender = reply.user_gender
+
+
+async def reset_conversation(memory: ChatMemory, repo: Repo, user_id: int) -> None:
+    """A new persona starts a new conversation (facts about the user are kept: they're about the user)."""
+    memory.clear(user_id)
+    await repo.clear_chat(user_id)
+
+
 @router.message(Command("practice"))
 async def cmd_practice(
     message: Message, state: FSMContext, user: User, deck: Deck, persona: PersonaCard, memory: ChatMemory
 ) -> None:
     await state.clear()
     user.practice_mode = not user.practice_mode
-    memory.clear(user.id)
     lang = get_lang(deck.target_lang)
     if user.practice_mode:
         await message.answer(
