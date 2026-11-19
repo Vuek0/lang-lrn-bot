@@ -9,6 +9,7 @@ from bot.images.arts import answer_with_avatar
 from bot.db.repo import Repo
 from bot.langs import LANGS, get_lang
 from bot.persona.card import PersonaCard, phrase
+from bot import menu
 
 router = Router(name="common")
 fallback_router = Router(name="fallback")
@@ -21,7 +22,16 @@ async def cmd_start(
 ) -> None:
     await state.clear()
     greeting = phrase(persona, "greeting", ["Привет! 👋"])
-    await answer_with_avatar(message, repo, persona_row, texts.help_text(get_lang(deck.target_lang), greeting))
+    await answer_with_avatar(
+        message, repo, persona_row, texts.help_text(get_lang(deck.target_lang), greeting),
+        reply_markup=menu.main_keyboard(),
+    )
+
+
+@router.message(F.text == menu.MORE)
+async def on_more(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    await message.answer(menu.MORE_TEXT, reply_markup=menu.main_keyboard())
 
 
 @router.message(Command("cancel"))

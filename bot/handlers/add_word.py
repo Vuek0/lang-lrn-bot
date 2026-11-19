@@ -21,6 +21,7 @@ from bot.images import arts
 from bot.persona.card import PersonaCard, phrase
 from bot.persona.memory import ChatMemory
 from bot.utils import esc, norm, utcnow
+from bot import menu
 
 log = logging.getLogger(__name__)
 router = Router(name="add_word")
@@ -72,7 +73,7 @@ def make_draft(analysis: WordAnalysis, senses: list[Sense], fallback: str) -> di
 # --- entry points: text & voice ---
 
 
-@router.message(AddWord.edit, F.text, ~F.text.startswith("/"))
+@router.message(AddWord.edit, F.text, ~F.text.startswith("/"), menu.NOT_MENU)
 async def on_custom_translation(message: Message, state: FSMContext, repo: Repo, deck: Deck) -> None:
     data = await state.get_data()
     draft = data.get("draft")

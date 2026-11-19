@@ -20,6 +20,7 @@ from bot.persona.card import PersonaCard, markdown_to_html
 from bot.persona.context import context_block, snapshot
 from bot.persona.memory import ChatMemory
 from bot.utils import norm, utcnow
+from bot import menu
 
 log = logging.getLogger(__name__)
 router = Router(name="talk")
@@ -162,6 +163,7 @@ async def reset_conversation(memory: ChatMemory, repo: Repo, user_id: int) -> No
 
 
 @router.message(Command("practice"))
+@router.message(F.text == menu.PRACTICE)
 async def cmd_practice(
     message: Message, state: FSMContext, user: User, deck: Deck, persona: PersonaCard, memory: ChatMemory
 ) -> None:

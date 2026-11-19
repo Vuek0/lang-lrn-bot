@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     native_lang: str = "ru"
     default_target_lang: str = "it"
 
+    # Optional Danbooru account for character art (danbooru.donmai.us → My Account → API Key)
+    danbooru_login: str = ""
+    danbooru_api_key: str = ""
+
     # How the persona's reaction pictures look: "sticker" (small, 512px) or "photo" (full picture)
     reaction_style: Literal["sticker", "photo"] = "sticker"
 

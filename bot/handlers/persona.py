@@ -18,6 +18,7 @@ from bot.persona.card import PersonaCard, phrase, render_card
 from bot.handlers.talk import reset_conversation
 from bot.persona.memory import ChatMemory
 from bot.utils import esc
+from bot import menu
 
 log = logging.getLogger(__name__)
 router = Router(name="persona")
@@ -56,6 +57,7 @@ ASK_REQUEST = (
 
 
 @router.message(Command("persona"))
+@router.message(F.text == menu.PERSONA)
 async def cmd_persona(message: Message, state: FSMContext, repo: Repo, user: User, persona_row: Persona) -> None:
     await state.clear()
     personas = await repo.list_personas(user)
@@ -149,7 +151,7 @@ async def on_menu(
 # --- creating & tweaking ---
 
 
-@router.message(PersonaFlow.request, F.text, ~F.text.startswith("/"))
+@router.message(PersonaFlow.request, F.text, ~F.text.startswith("/"), menu.NOT_MENU)
 async def on_request(message: Message, state: FSMContext, ai: AIService, user: User, deck: Deck) -> None:
     request = (message.text or "").strip()[:MAX_REQUEST_CHARS]
     await state.update_data(request=request, persona_id=None)
@@ -174,7 +176,7 @@ async def _preview(status: Message, state: FSMContext, card: PersonaCard) -> Non
     await status.edit_text(render_card(card), reply_markup=PREVIEW_KB)
 
 
-@router.message(PersonaFlow.revise, F.text, ~F.text.startswith("/"))
+@router.message(PersonaFlow.revise, F.text, ~F.text.startswith("/"), menu.NOT_MENU)
 async def on_revise(message: Message, state: FSMContext, ai: AIService, user: User, deck: Deck) -> None:
     data = await state.get_data()
     if "card" not in data:

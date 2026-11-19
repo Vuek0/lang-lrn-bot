@@ -12,6 +12,7 @@ from bot.langs import get_lang
 from bot.images import arts
 from bot.persona.card import PersonaCard, phrase
 from bot.utils import esc, format_interval, utcnow
+from bot import menu
 
 router = Router(name="review")
 
@@ -59,6 +60,7 @@ async def send_next_card(
 
 
 @router.message(Command("review"))
+@router.message(F.text == menu.REVIEW)
 async def cmd_review(
     message: Message,
     state: FSMContext,

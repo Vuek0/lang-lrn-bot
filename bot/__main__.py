@@ -12,7 +12,7 @@ from bot.config import get_settings
 from bot.db.session import make_engine, make_sessionmaker, run_migrations
 from bot.handlers import all_routers
 from bot.handlers.errors import on_error
-from bot.images import arts
+from bot.images import arts, booru
 from bot.jobs.scheduler import Scheduler
 from bot.middlewares import DbMiddleware, OwnerOnlyMiddleware
 from bot.persona.memory import ChatMemory
@@ -37,6 +37,7 @@ async def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     settings = get_settings()
     arts.STYLE = settings.reaction_style
+    booru.configure(settings.danbooru_login, settings.danbooru_api_key)
 
     await run_migrations(settings.database_url)
     engine = make_engine(settings.database_url)

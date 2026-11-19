@@ -13,6 +13,7 @@ from bot.db.models import Deck, User
 from bot.db.repo import Repo
 from bot.langs import get_lang
 from bot.utils import compute_streak, esc, utcnow
+from bot import menu
 
 router = Router(name="words")
 
@@ -20,6 +21,7 @@ LIST_LIMIT = 50
 
 
 @router.message(Command("list"))
+@router.message(F.text == menu.WORDS)
 async def cmd_list(message: Message, state: FSMContext, repo: Repo, deck: Deck) -> None:
     await state.clear()
     lang = get_lang(deck.target_lang)
@@ -76,6 +78,7 @@ async def on_delete(callback: CallbackQuery, repo: Repo, deck: Deck) -> None:
 
 
 @router.message(Command("stats"))
+@router.message(F.text == menu.STATS)
 async def cmd_stats(message: Message, state: FSMContext, repo: Repo, user: User, deck: Deck) -> None:
     await state.clear()
     tz = ZoneInfo(user.timezone)

@@ -364,3 +364,41 @@ def test_art_keyboard():
     assert [b.callback_data for b in row] == ["st:p:7", "st:b:7"] and row[0].text == "➕ В набор"
     art.pinned = True
     assert art_keyboard(art).inline_keyboard[0][0].text == "✅ В наборе"
+
+
+# --- Danbooru blocked (403 from data-center IPs): Safebooru takes over ---
+
+from bot.images.booru import parse_safebooru_tags  # noqa: E402
+
+SAFEBOORU_XML = """<?xml version="1.0" encoding="UTF-8"?><tags type="array">
+<tag type="0" count="15" name="roxy_migurdia_(cosplay)" ambiguous="false" id="1"/>
+<tag type="4" count="1017" name="roxy_migurdia" ambiguous="false" id="2"/></tags>"""
+
+
+def test_parse_safebooru_tags_keeps_characters_only():
+    assert parse_safebooru_tags(SAFEBOORU_XML) == [{"name": "roxy_migurdia", "post_count": 1017}]
+
+
+async def test_tag_lookup_falls_back_to_safebooru(monkeypatch):
+    calls = []
+
+    async def blocked(http, candidate):
+        calls.append(("danbooru", candidate))
+        raise RuntimeError("403 Forbidden")
+
+    async def safebooru(http, candidate):
+        calls.append(("safebooru", candidate))
+        return parse_safebooru_tags(SAFEBOORU_XML)
+
+    monkeypatch.setattr(booru, "_danbooru_tags", blocked)
+    monkeypatch.setattr(booru, "_safebooru_tags", safebooru)
+    assert await booru.find_character_tag("Roxy Migurdia", "Mushoku Tensei") == "roxy_migurdia"
+    assert calls[:2] == [("danbooru", "roxy_migurdia"), ("safebooru", "roxy_migurdia")]
+
+
+def test_danbooru_auth_is_optional():
+    booru.configure("", "")
+    assert booru._danbooru_auth is None
+    booru.configure("me", "secret")
+    assert booru._danbooru_auth.login == "me"
+    booru.configure()  # back to anonymous for other tests

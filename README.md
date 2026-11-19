@@ -45,6 +45,7 @@ cp .env.example .env    # и заполнить
 | `GROQ_MODELS`, `OPENAI_MODEL`, `GEMINI_MODELS` | нет | модели. Списки через запятую: если первая модель не ответила, пробуется следующая |
 
 AI-провайдеры выстраиваются в цепочку **Groq → OpenAI → Gemini**. Участвуют те, для которых задан ключ. Если один провайдер упал, упёрся в лимит или вернул битый ответ, бот за секунду переключается на следующий.
+| `DANBOORU_LOGIN`, `DANBOORU_API_KEY` | нет | аккаунт Danbooru для поиска артов (My Account → API Key). Без него, а также если Danbooru блокирует IP сервера (часто `403` для дата-центров), арты ищутся на Safebooru |
 | `DATABASE_URL` | нет | по умолчанию `sqlite+aiosqlite:///data/bot.db` |
 | `TIMEZONE` | нет | по умолчанию `Asia/Tashkent` |
 | `DEFAULT_TARGET_LANG` | нет | по умолчанию `it` |

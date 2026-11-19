@@ -10,6 +10,7 @@ import logging
 import random
 import re
 from dataclasses import dataclass, field
+from xml.etree import ElementTree
 
 import aiohttp
 
@@ -100,21 +101,69 @@ def pick_tag(found: list[dict], name_en: str, source: str) -> str | None:
 
 
 async def find_character_tag(name_en: str, source: str = "", guess: str = "") -> str | None:
-    """Resolve a character name to a Danbooru character tag (category 4). None if not found."""
-    try:
-        async with _session() as http:
-            for candidate in tag_candidates(name_en, guess):
-                found = await _get_json(
-                    http, f"{DANBOORU}/tags.json",
-                    {"search[name_matches]": f"{candidate}*", "search[category]": "4",
-                     "search[order]": "count", "limit": "10"},
-                )
+    """Resolve a character name to a character tag: Danbooru first, Safebooru if Danbooru fails or finds
+    nothing (servers in data centers often get 403 from Danbooru). None if not found anywhere."""
+    async with _session() as http:
+        for candidate in tag_candidates(name_en, guess):
+            for lookup in (_danbooru_tags, _safebooru_tags):
+                try:
+                    found = await lookup(http, candidate)
+                except Exception as exc:
+                    log.warning("%s tag lookup failed for %s: %s", lookup.__name__, candidate, _short_error(exc))
+                    continue
                 if tag := pick_tag(found, name_en or guess, source):
                     return tag
-            return None
-    except Exception as exc:
-        log.info("Danbooru tag lookup failed for %s: %r", name_en, exc)
-        return None
+    return None
+
+
+async def _danbooru_tags(http: aiohttp.ClientSession, candidate: str) -> list[dict]:
+    return await _get_json(
+        http, f"{DANBOORU}/tags.json",
+        {"search[name_matches]": f"{candidate}*", "search[category]": "4", "search[order]": "count", "limit": "10"},
+        auth=_danbooru_auth,
+    )
+
+
+async def _safebooru_tags(http: aiohttp.ClientSession, candidate: str) -> list[dict]:
+    """Safebooru's tag API answers in XML; characters are type 4.
+
+    Its tags can lag behind Danbooru renames ("gojou_satoru" there, "gojo_satoru" on Danbooru), so the
+    pattern lets each word continue: "gojo%_satoru%" matches both.
+    """
+    # Precise queries first: a short name like "rem" matches thousands of tags in a loose pattern,
+    # and Safebooru returns them in no useful order.
+    queries = [
+        {"name": candidate},  # exact: "megumin", or the AI's guess "rem_(re:zero)"
+        {"name_pattern": f"{candidate}_(%"},  # with a series qualifier: "rem_(re:zero)"
+        {"name_pattern": candidate.replace("_", "%_") + "%"},  # renamed words: "gojou_satoru"
+    ]
+    found: list[dict] = []
+    for query in queries:
+        params = {"page": "dapi", "s": "tag", "q": "index", "limit": "100", **query}
+        async with http.get(f"{SAFEBOORU}/index.php", params=params) as response:
+            response.raise_for_status()
+            found += parse_safebooru_tags(await response.text())
+        if found:
+            break
+    return found
+
+
+def parse_safebooru_tags(xml: str) -> list[dict]:
+    root = ElementTree.fromstring(xml)
+    return [
+        {"name": tag.get("name", ""), "post_count": int(tag.get("count", "0") or 0)}
+        for tag in root.iter("tag")
+        if tag.get("type") == "4"
+    ]
+
+
+# Optional Danbooru account (DANBOORU_LOGIN / DANBOORU_API_KEY): official API access, higher limits.
+_danbooru_auth: aiohttp.BasicAuth | None = None
+
+
+def configure(login: str = "", api_key: str = "") -> None:
+    global _danbooru_auth
+    _danbooru_auth = aiohttp.BasicAuth(login, api_key) if login and api_key else None
 
 
 def _danbooru_art(post: dict) -> Art | None:
@@ -168,22 +217,27 @@ async def search_arts(tag: str, emotion: str | None = None, limit: int = 40, sol
 
 
 async def _search(tag: str, second: str, limit: int) -> list[Art]:
+    """Danbooru first; Safebooru when Danbooru gives too little OR fails (e.g. blocks a server's IP)."""
     arts: list[Art] = []
-    try:
-        async with _session() as http:
+    async with _session() as http:
+        try:
             posts = await _get_json(
-                http, f"{DANBOORU}/posts.json", {"tags": f"{tag} {second} rating:g", "limit": str(limit)}
+                http, f"{DANBOORU}/posts.json", {"tags": f"{tag} {second} rating:g", "limit": str(limit)},
+                auth=_danbooru_auth,
             )
             arts = [a for a in map(_danbooru_art, posts) if a and not a.is_ai]
-            if len(arts) < 3:
+        except Exception as exc:
+            log.warning("Danbooru search failed for %s %s: %s", tag, second, _short_error(exc))
+        if len(arts) < 3:
+            try:
                 posts = await _get_json(
                     http, f"{SAFEBOORU}/index.php",
                     {"page": "dapi", "s": "post", "q": "index", "json": "1", "limit": str(limit),
                      "tags": f"{tag} {second} -ai-generated -ai-assisted"},
                 )
                 arts += [a for a in map(_safebooru_art, posts or []) if a and not a.is_ai]
-    except Exception as exc:
-        log.info("art search failed for %s %s: %r", tag, second, exc)
+            except Exception as exc:
+                log.warning("Safebooru search failed for %s %s: %s", tag, second, _short_error(exc))
     random.shuffle(arts)
     arts.sort(key=lambda a: "solo" not in a.tags)  # stable: solo first, random within groups
     return arts
@@ -202,7 +256,7 @@ async def download(art: Art) -> bytes | None:
                     return None
             return bytes(data)
     except Exception as exc:
-        log.info("image download failed %s: %r", art.image_url, exc)
+        log.warning("image download failed %s: %s", art.image_url, _short_error(exc))
         return None
 
 
@@ -222,8 +276,16 @@ def _session() -> aiohttp.ClientSession:
     return aiohttp.ClientSession(timeout=TIMEOUT, headers={"User-Agent": USER_AGENT})
 
 
-async def _get_json(http: aiohttp.ClientSession, url: str, params: dict) -> list:
-    async with http.get(url, params=params) as response:
+async def _get_json(
+    http: aiohttp.ClientSession, url: str, params: dict, auth: aiohttp.BasicAuth | None = None
+) -> list:
+    async with http.get(url, params=params, auth=auth) as response:
         response.raise_for_status()
         data = await response.json(content_type=None)
         return data if isinstance(data, list) else []
+
+
+def _short_error(exc: Exception) -> str:
+    """'403 Forbidden' instead of a whole aiohttp repr with headers."""
+    status = getattr(exc, "status", None)
+    return f"{status} {getattr(exc, 'message', '')}".strip() if status else repr(exc)[:200]
