@@ -5,7 +5,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 
 from bot import texts
 from bot.db.models import Deck, Persona, User
-from bot.images.arts import caption
+from bot.images.arts import answer_with_avatar
 from bot.db.repo import Repo
 from bot.langs import LANGS, get_lang
 from bot.persona.card import PersonaCard, phrase
@@ -17,15 +17,11 @@ fallback_router = Router(name="fallback")
 @router.message(CommandStart())
 @router.message(Command("help"))
 async def cmd_start(
-    message: Message, state: FSMContext, deck: Deck, persona: PersonaCard, persona_row: Persona
+    message: Message, state: FSMContext, repo: Repo, deck: Deck, persona: PersonaCard, persona_row: Persona
 ) -> None:
     await state.clear()
     greeting = phrase(persona, "greeting", ["Привет! 👋"])
-    text = texts.help_text(get_lang(deck.target_lang), greeting)
-    if persona_row.avatar_file_id and len(text) <= 1024:
-        await message.answer_photo(persona_row.avatar_file_id, caption=caption(text))
-    else:
-        await message.answer(text)
+    await answer_with_avatar(message, repo, persona_row, texts.help_text(get_lang(deck.target_lang), greeting))
 
 
 @router.message(Command("cancel"))

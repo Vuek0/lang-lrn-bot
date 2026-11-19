@@ -4,9 +4,10 @@ import hashlib
 import logging
 import random
 
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import BufferedInputFile, InputMediaPhoto, Message
 
-from bot.db.models import Persona
+from bot.db.models import Persona, PersonaArt
 from bot.db.repo import Repo
 from bot.images import booru
 from bot.images.sticker import to_sticker
@@ -31,6 +32,8 @@ EVENT_EMOTION = {"review_done": "happy", "milestone": "excited", "wrong": "sad",
 # review card, where the same picture again and again would get boring.
 AVATAR_EVENTS = {"chat", "milestone", "review_done"}
 AVATAR_STICKER = "st:avatar"
+
+_last_sent: dict[int, str] = {}  # persona id → post_id of the last reaction picture
 
 
 def caption(text_html: str) -> str:
@@ -95,9 +98,12 @@ async def send_reaction(
         cache_key = f"st:{emotion}" if stickers else emotion  # stickers and photos have separate file_ids
         cached = await repo.cached_arts(persona.id, cache_key)
 
-        if cached and (len(cached) >= REUSE_AFTER or random.random() < 0.5):
-            await _send(message, random.choice(cached).file_id, text_html, stickers)
-            return True
+        # Reuse a cached picture only if there's one besides the last sent (no same sticker twice in a row)
+        reusable = [a for a in cached if a.post_id != _last_sent.get(persona.id)]
+        if reusable and (len(cached) >= REUSE_AFTER or random.random() < 0.5):
+            if await _send_cached(message, repo, random.choice(reusable), text_html, stickers):
+                return True
+            cached = await repo.cached_arts(persona.id, cache_key)  # a dead file_id was dropped
 
         known = {a.post_id for a in cached}
         # Emotion searches can't also ask for "solo" (2-tag limit), so fetch more and filter on our side.
@@ -108,15 +114,53 @@ async def send_reaction(
                 continue
             file_id = await _send(message, BufferedInputFile(data, filename=f"{art.post_id}.webp"), text_html, stickers)
             await repo.add_art(persona.id, cache_key, art.post_id, file_id, art.credit)
+            _last_sent[persona.id] = art.post_id
             return True
 
-        if cached:  # nothing new found: reuse what we have
-            await _send(message, random.choice(cached).file_id, text_html, stickers)
-            return True
+        if cached:  # nothing new found: reuse what we have, avoiding a repeat when possible
+            pool = [a for a in cached if a.post_id != _last_sent.get(persona.id)] or cached
+            return await _send_cached(message, repo, random.choice(pool), text_html, stickers)
         return False
     except Exception:
         log.exception("reaction picture failed")
         return False
+
+
+def is_dead_file_id(exc: Exception) -> bool:
+    """Telegram file_ids belong to one bot: after a token change (or in a test bot sharing the DB)
+    old ones are rejected with "wrong file identifier"."""
+    text = str(exc).lower()
+    return isinstance(exc, TelegramBadRequest) and ("file identifier" in text or "file_id" in text)
+
+
+async def _send_cached(message: Message, repo: Repo, art: PersonaArt, text_html: str, sticker: bool) -> bool:
+    """Send a cached picture; if its file_id is dead, forget it and report False."""
+    try:
+        await _send(message, art.file_id, text_html, sticker)
+        _last_sent[art.persona_id] = art.post_id
+        return True
+    except TelegramBadRequest as exc:
+        if not is_dead_file_id(exc):
+            raise
+        log.info("dropping a dead cached file_id (persona %s, %s)", art.persona_id, art.emotion)
+        await repo.delete_art(art.id)
+        return False
+
+
+async def answer_with_avatar(
+    message: Message, repo: Repo, persona: Persona, text_html: str, reply_markup=None
+) -> None:
+    """Text under the persona's avatar; plain text if there's no avatar or its file_id is dead."""
+    if persona.avatar_file_id and len(text_html) <= 1024:
+        try:
+            await message.answer_photo(persona.avatar_file_id, caption=text_html, reply_markup=reply_markup)
+            return
+        except TelegramBadRequest as exc:
+            if not is_dead_file_id(exc):
+                raise
+            log.info("dropping a dead avatar file_id (persona %s)", persona.id)
+            await repo.set_avatar(persona, None, "")
+    await message.answer(text_html, reply_markup=reply_markup)
 
 
 async def _avatar_reaction(message: Message, repo: Repo, persona: Persona, text_html: str, stickers: bool) -> bool:
@@ -124,14 +168,19 @@ async def _avatar_reaction(message: Message, repo: Repo, persona: Persona, text_
     if not persona.avatar_file_id:
         return False
     if not stickers:
-        await message.answer_photo(persona.avatar_file_id, caption=caption(text_html))
+        await answer_with_avatar(message, repo, persona, caption(text_html))
         return True
     post_id = "av" + hashlib.md5(persona.avatar_file_id.encode()).hexdigest()[:24]  # changes with the avatar
     cached = [a for a in await repo.cached_arts(persona.id, AVATAR_STICKER) if a.post_id == post_id]
-    if cached:
-        await _send(message, cached[0].file_id, text_html, True)
+    if cached and await _send_cached(message, repo, cached[0], text_html, True):
         return True
-    buffer = await message.bot.download(persona.avatar_file_id)
+    try:
+        buffer = await message.bot.download(persona.avatar_file_id)
+    except TelegramBadRequest as exc:
+        if not is_dead_file_id(exc):
+            raise
+        await repo.set_avatar(persona, None, "")  # the avatar itself belongs to another bot
+        return False
     data = to_sticker(buffer.read()) if buffer else None
     if data is None:
         return False

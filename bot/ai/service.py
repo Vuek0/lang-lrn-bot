@@ -74,12 +74,16 @@ class AIService:
     async def _ask(self, messages: Messages, parse):
         """Send to providers in order until one returns something `parse` accepts."""
         failures = []
-        for provider in self.text_providers:
+        for i, provider in enumerate(self.text_providers):
             try:
-                return parse(await provider.complete(messages, json_mode=True))
+                result = parse(await provider.complete(messages, json_mode=True))
             except Exception as exc:
                 log.warning("text provider %s failed: %r", provider.name, exc)
                 failures.append(f"{provider.name}: {exc!r}"[:300])
+                continue
+            # Which model answered: a fallback (i > 0) explains a sudden drop in answer quality.
+            (log.warning if i else log.info)("answered by %s%s", provider.name, " (fallback)" if i else "")
+            return result
         raise AIError("all text providers failed: " + " | ".join(failures))
 
     # --- words ---
@@ -173,7 +177,7 @@ class AIService:
         practice: bool = False,
     ) -> PersonaReply:
         card_json = card.model_dump_json(exclude={"phrases"})
-        system = prompts.persona_system_prompt(card_json, target, native, practice)
+        system = prompts.persona_system_prompt(card_json, target, native, practice, card.gender)
         messages = [{"role": "system", "content": system}, *history, {"role": "user", "content": text}]
 
         def parse(raw: str) -> PersonaReply:

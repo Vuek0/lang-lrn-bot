@@ -11,6 +11,7 @@ from bot.ai.service import build_ai
 from bot.config import get_settings
 from bot.db.session import make_engine, make_sessionmaker, run_migrations
 from bot.handlers import all_routers
+from bot.handlers.errors import on_error
 from bot.images import arts
 from bot.middlewares import DbMiddleware, OwnerOnlyMiddleware
 from bot.persona.memory import ChatMemory
@@ -41,6 +42,7 @@ async def main() -> None:
     dp.update.outer_middleware(OwnerOnlyMiddleware(settings.owner_id))
     dp.update.outer_middleware(DbMiddleware(sessionmaker, settings))
     dp.include_routers(*all_routers())
+    dp.errors.register(on_error)  # no silent failures: log + tell the user
 
     await bot.set_my_commands(COMMANDS)
     try:

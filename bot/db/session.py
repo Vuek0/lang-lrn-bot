@@ -39,7 +39,27 @@ def alembic_config(url: str) -> Config:
     return config
 
 
+def check_sqlite_writable(url: str) -> None:
+    """SQLite writes a journal next to the database: the FOLDER must be writable, not only the file.
+    Fail at startup with a clear message instead of buttons that silently do nothing."""
+    parsed = make_url(url)
+    if parsed.get_backend_name() != "sqlite" or not parsed.database or parsed.database == ":memory:":
+        return
+    folder = os.path.dirname(os.path.abspath(parsed.database)) or "."
+    probe = os.path.join(folder, ".write-test")
+    try:
+        with open(probe, "w") as f:
+            f.write("ok")
+        os.remove(probe)
+    except OSError as exc:
+        raise RuntimeError(
+            f"database folder {folder} is not writable ({exc}). In Docker, give the bot user the volume: "
+            "docker run --rm -v lang-lrn-bot_bot-data:/data alpine chown -R 1000:1000 /data"
+        ) from exc
+
+
 async def run_migrations(url: str) -> None:
     """alembic upgrade head. Runs in a thread because Alembic's async env starts its own event loop."""
     make_engine(url)  # creates the SQLite folder if needed
+    check_sqlite_writable(url)
     await asyncio.to_thread(command.upgrade, alembic_config(url), "head")

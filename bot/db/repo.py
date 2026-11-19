@@ -121,6 +121,9 @@ class Repo:
         )
         return list(rows)
 
+    async def delete_art(self, art_id: int) -> None:
+        await self.s.execute(delete(PersonaArt).where(PersonaArt.id == art_id))
+
     async def add_art(self, persona_id: int, emotion: str, post_id: str, file_id: str, credit: str) -> None:
         await self._insert_ignoring_conflict(
             PersonaArt(persona_id=persona_id, emotion=emotion, post_id=post_id, file_id=file_id, credit=credit)

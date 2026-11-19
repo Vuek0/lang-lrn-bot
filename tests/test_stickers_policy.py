@@ -244,3 +244,13 @@ async def test_asked_for_sticker_is_always_sent(repo, monkeypatch):
         user, deck, DEFAULT_CARD, persona_row=persona_row, small_talk=False,
     )
     assert calls == [("happy", True)]
+
+
+def test_persona_prompt_has_grammatical_gender_rules():
+    from bot.ai.prompts import persona_system_prompt
+
+    female = persona_system_prompt("{}", "it", "ru", False, "female")
+    assert "я рада" in female and "я рад»" not in female
+    assert "я рад»" in persona_system_prompt("{}", "it", "ru", False, "male")
+    unknown = persona_system_prompt("{}", "it", "ru", False, "")
+    assert "consistent" in unknown and "gender-neutral" in unknown  # the user's gender rule is always there

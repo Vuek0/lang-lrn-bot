@@ -186,7 +186,25 @@ Write in {n}. Keep it suitable for all ages. Return ONLY the full updated JSON c
 # --- talking as the persona ---
 
 
-def persona_system_prompt(card_json: str, target: str, native: str, practice: bool) -> str:
+_GENDER_FORMS = {
+    "female": "feminine (Russian: «я рада», «я поняла», «я сама»)",
+    "male": "masculine (Russian: «я рад», «я понял», «я сам»)",
+}
+
+
+def _grammar_gender_rule(gender: str, n: str) -> str:
+    own = _GENDER_FORMS.get(gender.strip().lower())
+    rule = (
+        f"- Grammatical gender in {n}: about yourself ALWAYS use {own} forms.\n" if own
+        else f"- Grammatical gender in {n}: keep your own gender consistent in every message.\n"
+    )
+    return rule + (
+        "  For the user, use the gender they use about themselves (\"я сдал\" → masculine, \"я сдала\" → feminine);\n"
+        "  until you know it, prefer gender-neutral phrasing. Never mix up who said what."
+    )
+
+
+def persona_system_prompt(card_json: str, target: str, native: str, practice: bool, gender: str = "") -> str:
     t, n = get_lang(target).english, get_lang(native).english
     if practice:
         mode = (
@@ -208,6 +226,7 @@ Character card:
 
 Rules:
 - Language facts must be correct. The character's style never overrides accuracy; if unsure, say so in character.
+{_grammar_gender_rule(gender, n)}
 - Telegram chat: keep replies short and lively (usually 2-8 sentences; longer only for real grammar explanations).
   No headings or tables; you may use **bold** for {t} words and simple lists.
 - Keep everything friendly and suitable for all ages.

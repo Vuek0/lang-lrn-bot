@@ -121,3 +121,17 @@ async def test_migrations_create_schema(tmp_path):
         await session.commit()
         assert await repo.count_words(deck.id) == 1
     await engine.dispose()
+
+
+def test_sqlite_folder_must_be_writable(tmp_path, monkeypatch):
+    from bot.db import session
+
+    session.check_sqlite_writable(f"sqlite+aiosqlite:///{(tmp_path / 'bot.db').as_posix()}")  # fine
+    session.check_sqlite_writable("sqlite+aiosqlite:///:memory:")  # nothing to check
+
+    def deny(*args, **kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr("builtins.open", deny)
+    with pytest.raises(RuntimeError, match="chown -R 1000:1000"):
+        session.check_sqlite_writable(f"sqlite+aiosqlite:///{(tmp_path / 'bot.db').as_posix()}")

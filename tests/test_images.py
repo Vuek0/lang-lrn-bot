@@ -239,3 +239,73 @@ async def test_original_persona_sends_its_avatar_as_a_sticker(repo, monkeypatch)
     await repo.set_avatar(roxy, "avatar-file-2", "")
     assert await arts.send_reaction(message, repo, roxy, DEFAULT_CARD, "chat", force=True)
     assert downloads == ["avatar-file-1", "avatar-file-2"]
+
+
+# --- file_ids from another bot (token changed, or a test bot sharing the DB) ---
+
+from aiogram.exceptions import TelegramBadRequest  # noqa: E402
+
+DEAD = "Bad Request: wrong file identifier/HTTP URL specified"
+
+
+class PickyMessage(FakeMessage):
+    """Rejects file_ids that this bot didn't upload."""
+
+    def __init__(self, dead: set[str]):
+        super().__init__()
+        self.dead = dead
+
+    async def answer_photo(self, photo, caption=None, **kwargs):
+        if isinstance(photo, str) and photo in self.dead:
+            raise TelegramBadRequest(method=None, message=DEAD)
+        return await super().answer_photo(photo, caption, **kwargs)
+
+    async def answer_sticker(self, sticker, **kwargs):
+        if isinstance(sticker, str) and sticker in self.dead:
+            raise TelegramBadRequest(method=None, message=DEAD)
+        return await super().answer_sticker(sticker, **kwargs)
+
+    async def answer(self, text, **kwargs):
+        self.texts.append(text)
+
+
+async def test_dead_avatar_falls_back_to_text_and_is_forgotten(repo):
+    _, persona = await _persona(repo)
+    await repo.set_avatar(persona, "other-bots-file", "")
+    message = PickyMessage(dead={"other-bots-file"})
+    await arts.answer_with_avatar(message, repo, persona, "Ciao!")
+    assert message.texts == ["Ciao!"] and message.photos == []
+    assert persona.avatar_file_id is None
+
+
+async def test_dead_cached_sticker_is_dropped_and_replaced(repo, board, monkeypatch):
+    monkeypatch.setattr(arts, "STYLE", "sticker")
+    monkeypatch.setattr(arts, "REUSE_AFTER", 1)  # always try the cache first
+    _, persona = await _persona(repo)
+    persona.art_tag = "megumin"
+    await repo.add_art(persona.id, "st:happy", "d1", "other-bots-sticker", "")
+    message = PickyMessage(dead={"other-bots-sticker"})
+
+    assert await arts.send_reaction(message, repo, persona, MEGUMIN, "review_done", force=True)
+    cached = await repo.cached_arts(persona.id, "st:happy")
+    assert [c.file_id for c in cached] == ["sticker-1"]  # the dead one is gone, a fresh one is cached
+
+
+def test_other_bad_requests_are_not_mistaken_for_dead_files():
+    assert arts.is_dead_file_id(TelegramBadRequest(method=None, message=DEAD))
+    assert not arts.is_dead_file_id(TelegramBadRequest(method=None, message="Bad Request: message is too long"))
+    assert not arts.is_dead_file_id(RuntimeError("file identifier"))
+
+
+async def test_same_sticker_is_not_sent_twice_in_a_row(repo, board, monkeypatch):
+    monkeypatch.setattr(arts, "STYLE", "sticker")
+    monkeypatch.setattr(arts, "REUSE_AFTER", 1)  # always reuse the cache when possible
+    _, persona = await _persona(repo)
+    persona.art_tag = "megumin"
+    await repo.add_art(persona.id, "st:happy", "d1", "f1", "")
+    await repo.add_art(persona.id, "st:happy", "d2", "f2", "")
+    message = FakeMessage()
+    for _ in range(6):
+        assert await arts.send_reaction(message, repo, persona, MEGUMIN, "review_done", force=True)
+    sent = message.stickers
+    assert all(a != b for a, b in zip(sent, sent[1:])), sent

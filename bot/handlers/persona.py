@@ -64,12 +64,7 @@ async def cmd_persona(message: Message, state: FSMContext, repo: Repo, user: Use
     title = esc(PersonaCard.model_validate(persona_row.card).title)
     text = f"Сейчас с тобой: 🎭 <b>{title}</b>{others}"
     keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
-    if persona_row.avatar_file_id:
-        await message.answer_photo(
-            persona_row.avatar_file_id, caption=arts.caption(text), reply_markup=keyboard
-        )
-    else:
-        await message.answer(text, reply_markup=keyboard)
+    await arts.answer_with_avatar(message, repo, persona_row, text, reply_markup=keyboard)
 
 
 @router.callback_query(F.data.startswith("p:"))
@@ -109,7 +104,7 @@ async def on_menu(
     elif action == "use":
         await repo.activate_persona(user, persona.id)
         memory.clear(user.id)
-        await greet(message, persona, card)
+        await greet(message, repo, persona, card)
     elif action == "edit":
         await state.set_state(PersonaFlow.revise)
         await state.update_data(card=card.model_dump(), persona_id=persona.id, request="")
@@ -221,7 +216,7 @@ async def on_preview_action(
         memory.clear(user.id)
         await message.edit_reply_markup(reply_markup=None)
         if saved.avatar_file_id:
-            await greet(message, saved, card)
+            await greet(message, repo, saved, card)
             return
         rows = [[_btn("📤 Своя картинка", f"p:upl:{saved.id}")]]
         if card.name_en or card.booru_tag:
@@ -268,12 +263,9 @@ async def _fill_identity(ai: AIService, repo: Repo, persona: Persona, card: Pers
     return card
 
 
-async def greet(message: Message, persona: Persona, card: PersonaCard) -> None:
+async def greet(message: Message, repo: Repo, persona: Persona, card: PersonaCard) -> None:
     text = f"🎭 <b>{esc(card.title)}</b>\n\n{esc(phrase(card, 'greeting', ['Привет! 👋']))}"
-    if persona.avatar_file_id:
-        await message.answer_photo(persona.avatar_file_id, caption=arts.caption(text))
-    else:
-        await message.answer(text)
+    await arts.answer_with_avatar(message, repo, persona, text)
 
 
 @router.callback_query(F.data.startswith("av:"))
@@ -290,7 +282,7 @@ async def on_avatar_pick(callback: CallbackQuery, state: FSMContext, repo: Repo,
     await repo.set_avatar(persona, chosen["file_id"], chosen["credit"])
     await state.update_data(avatar_candidates=None)
     await callback.message.edit_reply_markup(reply_markup=None)
-    await greet(callback.message, persona, PersonaCard.model_validate(persona.card))
+    await greet(callback.message, repo, persona, PersonaCard.model_validate(persona.card))
 
 
 @router.message(PersonaFlow.upload, F.photo)
@@ -302,7 +294,7 @@ async def on_avatar_upload(message: Message, state: FSMContext, repo: Repo, user
         await message.answer(texts.STALE)
         return
     await repo.set_avatar(persona, message.photo[-1].file_id, "")
-    await greet(message, persona, PersonaCard.model_validate(persona.card))
+    await greet(message, repo, persona, PersonaCard.model_validate(persona.card))
 
 
 @router.message(PersonaFlow.upload, ~F.text.startswith("/"))
