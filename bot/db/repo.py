@@ -140,17 +140,16 @@ class Repo:
     async def add_art(
         self, persona_id: int, emotion: str, post_id: str, file_id: str, credit: str, pinned: bool = False
     ) -> PersonaArt:
-        """Save a picture (or update it if this post is already saved). Returns the row."""
-        art = await self.s.scalar(
-            select(PersonaArt).where(PersonaArt.persona_id == persona_id, PersonaArt.post_id == post_id)
+        """Save a picture for an emotion (or update it if it's already saved for that emotion). Returns the row."""
+        same = select(PersonaArt).where(
+            PersonaArt.persona_id == persona_id, PersonaArt.emotion == emotion, PersonaArt.post_id == post_id
         )
+        art = await self.s.scalar(same)
         if art is None:
             await self._insert_ignoring_conflict(PersonaArt(
                 persona_id=persona_id, emotion=emotion, post_id=post_id, file_id=file_id, credit=credit, pinned=pinned
             ))
-            art = await self.s.scalar(
-                select(PersonaArt).where(PersonaArt.persona_id == persona_id, PersonaArt.post_id == post_id)
-            )
+            art = await self.s.scalar(same)
         else:
             art.file_id, art.banned = file_id, False
             art.pinned = art.pinned or pinned

@@ -402,3 +402,16 @@ def test_danbooru_auth_is_optional():
     booru.configure("me", "secret")
     assert booru._danbooru_auth.login == "me"
     booru.configure()  # back to anonymous for other tests
+
+
+async def test_same_art_in_two_emotions_is_chosen_separately(repo):
+    _, persona = await _persona(repo)
+    happy = await repo.add_art(persona.id, "st:happy", "d42", "f-happy", "", pinned=True)
+    proud = await repo.add_art(persona.id, "st:proud", "d42", "f-proud", "")
+    assert happy.id != proud.id
+    assert happy.pinned and not proud.pinned  # «✅ В наборе» only where it was chosen
+    proud.pinned = True
+    proud.banned = False
+    happy.banned = True  # 👎 in one emotion doesn't touch the other
+    assert [a.id for a in await repo.cached_arts(persona.id, "st:proud")] == [proud.id]
+    assert await repo.cached_arts(persona.id, "st:happy") == []

@@ -170,7 +170,8 @@ class PersonaArt(Base):
     """
 
     __tablename__ = "persona_arts"
-    __table_args__ = (UniqueConstraint("persona_id", "post_id"),)
+    # One row per emotion: the same art can be in "happy" and still unchosen in "proud".
+    __table_args__ = (UniqueConstraint("persona_id", "emotion", "post_id", name="uq_persona_arts_emotion_post"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     persona_id: Mapped[int] = mapped_column(ForeignKey("personas.id"), index=True)
