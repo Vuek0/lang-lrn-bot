@@ -1,98 +1,111 @@
 # lang-lrn-bot
 
-Личный Telegram-бот для изучения иностранных слов.
+A personal Telegram bot for learning foreign words, with an AI tutor that plays any character you like.
 
-- Слово можно прислать **текстом или голосовым**. Бот через AI (Groq / OpenAI / Gemini) переводит его, проверяет на опечатки и начальную форму, уточняет значение и показывает карточку перед сохранением.
-- **Повторение как в Anki**: алгоритм FSRS, карточки в обе стороны (IT→RU и RU→IT), оценки «Снова / Трудно / Хорошо / Легко».
-- **Ответ на карточку текстом или голосом**: AI проверяет перевод с учётом синонимов и опечаток, по голосу подсказывает, над каким звуком поработать. Комментарий пишет персонаж, рекомендованная оценка отмечена 👉, а выбор оценки остаётся за тобой.
-- **Озвучка** 🔊: слово и пример произносит нейросетевой голос носителя (Microsoft Edge TTS, бесплатно). Голос подбирается под пол персонажа, каждая фраза озвучивается один раз и кэшируется.
-- Несколько языков: у каждого своя колода (`/lang`).
-- **Персонаж-репетитор** (`/persona`): бот говорит от лица любого персонажа. Это может быть герой аниме, манги или игры (информация берётся с AniList, если получится — ещё и с Fandom) или свой, по описанию. Карточку персонажа можно поправить словами. По умолчанию это Рокси.
-- **Арты персонажа**: аватарку можно выбрать из настоящих артов с Danbooru (запасной источник — Safebooru) или прислать свою. Берутся только арты с рейтингом general, всё, что помечено как ИИ, отфильтровывается. Иногда персонаж реагирует **стикером** с эмоцией:
-  - **повторение карточек** — грустит после ошибки, радуется верному ответу, в конце сессии стикер приходит всегда;
-  - **болтовня** — иногда, если AI считает реакцию яркой (ты сдал экзамен, тебе грустно);
-  - **сохранение слова** — только по поводу: 25/50/100/… слов в колоде, 10 слов за день, возвращение после перерыва;
-  - **ответы на вопросы и объяснения** — никогда. Стикер делается из арта, где персонаж один: вырезается квадрат по верхней части с лицом, 512 px, WebP. Чтобы вместо стикеров были обычные фото, добавь в `.env` строку `REACTION_STYLE=photo`. Отправленные картинки кэшируются по Telegram `file_id`.
-- **Свои наборы стикеров** (`/stickers`): для каждой эмоции бот показывает варианты настоящими стикерами. «➕ В набор» добавляет стикер в набор, «👎» убирает навсегда. Если набор собран, реакции берутся только из него. Можно переслать боту **любой стикер** из Telegram и привязать его к эмоции: так стикеры появляются даже у персонажей без артов.
-- **Память и настроение**:
-  - персонаж запоминает из разговоров твоё имя и факты о тебе (`/memory` показывает, что он помнит, и позволяет всё стереть);
-  - знает твой прогресс и слова, которые тебе даются тяжело;
-  - настроение зависит от серии дней и от того, как давно ты заходил;
-  - история разговора хранится в базе и переживает перезапуски.
-- **Напоминания** (`/remind`, по умолчанию в 12:00 и 20:00): персонаж сам зовёт повторить карточки, а если тебя давно нет, пишет, что скучает, со стикером. Если ты только что был в боте, он не беспокоит.
-- **Ежедневный бэкап**: в 3:00 персонаж присылает файл базы (`.db.gz`) со стикером и подписью; `/backup` присылает его сразу.
-- **Вопросы и болтовня**: «объясни congiuntivo», «как сказать „я опоздал“?». Бот сам понимает, слово это или вопрос, и отвечает в стиле персонажа с кнопками «➕ добавить слово». `/practice` включает режим разговора на изучаемом языке с исправлением ошибок.
-- `/list`, `/stats` (включая серию дней), `/delete`.
+The bot's interface is in Russian; the language you learn is configurable (Italian by default, plus English, Spanish, French, German, Portuguese, Japanese, Korean, Chinese, Turkish).
 
-Стек: Python 3.12, aiogram 3, SQLAlchemy 2 + SQLite, Alembic, openai (для Groq/OpenAI), google-genai, fsrs, Docker.
+## Features
 
-## Запуск локально
+- **Add words by text or voice.** The AI (Groq / OpenAI / Gemini) translates the word, checks spelling and the dictionary form, asks which meaning you want, and shows a card preview before saving.
+- **Anki-style review.** Spaced repetition with FSRS, cards in both directions (IT→RU and RU→IT), grades Again / Hard / Good / Easy.
+- **Answer cards by text or voice.** The AI checks your answer, allowing synonyms and small typos. For spoken answers it tells you which sound to work on. The persona comments on the answer and the suggested grade is marked 👉, but you always pick the grade yourself.
+- **Pronunciation** 🔊. A native neural voice reads the word and its example (Microsoft Edge TTS, free). The voice matches the persona's gender, and each phrase is synthesized once and then cached.
+- **Several languages**, each with its own deck (`/lang`).
+- **Persona tutor** (`/persona`). The bot talks as any character: someone from an anime, manga or game (details come from AniList, plus Fandom when it's reachable), or an original character described in your own words. You can edit the character card in plain language. The default persona is Roxy.
+- **Character art.**
+  - Pick an avatar from real artwork on Danbooru (Safebooru as a fallback) or upload your own.
+  - Only general-rated art is used, and anything tagged as AI-generated is filtered out.
+- **Sticker reactions.** The persona sometimes reacts with an emotion sticker:
+  - **reviewing cards** — sad after a mistake, happy after a right answer, always at the end of a session;
+  - **small talk** — sometimes, when the AI sees a strong emotion (you passed an exam, you feel down);
+  - **saving words** — only for milestones: 25/50/100/… words in the deck, 10 words in a day, coming back after a break;
+  - **answers to questions and explanations** — never.
+
+  Stickers are made from solo arts: a square crop from the top of the art (where the face usually is), 512 px, WebP. Set `REACTION_STYLE=photo` to get full pictures instead. Sent pictures are cached by their Telegram `file_id`.
+- **Your own sticker sets** (`/stickers`).
+  - For every emotion the bot shows candidates as real stickers: "➕" adds one to your set, "👎" removes it for good.
+  - Once a set exists, reactions come only from it.
+  - You can forward **any Telegram sticker** to the bot and bind it to an emotion, so even personas without artwork can have stickers.
+- **Memory and mood.**
+  - The persona remembers your name and facts about you from conversations. `/memory` shows what it remembers and lets you wipe it.
+  - It knows your progress and the words you keep forgetting.
+  - Its mood depends on your streak and on how long you've been away.
+  - The conversation history is stored in the database and survives restarts.
+- **Reminders** (`/remind`, 12:00 and 20:00 by default). The persona invites you to review due cards and, if you've been away for a while, tells you it misses you, with a sticker. It doesn't bother you if you've just been active.
+- **Daily backup.** At 3:00 the persona sends the database file (`.db.gz`) with a sticker and a note. `/backup` sends it right away.
+- **Questions and small talk.** Ask things like "explain the congiuntivo" or "how do I say 'I'm late'?". The bot works out whether you sent a word or a question and answers in the persona's style, with "➕" buttons to add the words it used. `/practice` switches to conversation practice in the target language, with corrections.
+- **Main menu** under the input field, plus `/list`, `/stats` (including your streak) and `/delete`.
+
+**Stack:** Python 3.12, aiogram 3, SQLAlchemy 2 + SQLite, Alembic, openai (for Groq/OpenAI), google-genai, fsrs, edge-tts, Pillow, Docker.
+
+## Running locally
 
 ```bash
 python -m venv .venv
 .venv/Scripts/pip install -r requirements.txt -r requirements-dev.txt   # Linux/macOS: .venv/bin/pip
-cp .env.example .env    # и заполнить
+cp .env.example .env    # then fill it in
 .venv/Scripts/python -m bot
 ```
 
-Переменные окружения:
+Environment variables:
 
-| Переменная | Обязательна | Описание |
+| Variable | Required | Description |
 |---|---|---|
-| `BOT_TOKEN` | да | токен от @BotFather |
-| `OWNER_ID` | да | твой Telegram ID (@userinfobot). Бот отвечает только ему |
-| `GROQ_API_KEY` | хотя бы один AI-ключ | console.groq.com: бесплатно и быстро, текст + Whisper для голоса |
-| `OPENAI_API_KEY` | | platform.openai.com (платно) |
-| `GEMINI_API_KEY` | | aistudio.google.com (бесплатно, но часто перегружен) |
-| `GROQ_MODELS`, `OPENAI_MODEL`, `GEMINI_MODELS` | нет | модели. Списки через запятую: если первая модель не ответила, пробуется следующая |
+| `BOT_TOKEN` | yes | token from @BotFather |
+| `OWNER_ID` | yes | your Telegram user ID (ask @userinfobot). The bot answers only this user |
+| `GROQ_API_KEY` | at least one AI key | console.groq.com: free and fast, text plus Whisper for voice |
+| `OPENAI_API_KEY` | | platform.openai.com (paid) |
+| `GEMINI_API_KEY` | | aistudio.google.com (free, but often overloaded) |
+| `GROQ_MODELS`, `OPENAI_MODEL`, `GEMINI_MODELS` | no | models to use; in comma-separated lists the next model is tried if the first one fails |
+| `DANBOORU_LOGIN`, `DANBOORU_API_KEY` | no | Danbooru account for art search (My Account → API Key). Without it, or when Danbooru blocks the server's IP (data-center IPs often get `403`), art is searched on Safebooru |
+| `REACTION_STYLE` | no | `sticker` (default) or `photo` |
+| `DATABASE_URL` | no | default `sqlite+aiosqlite:///data/bot.db` |
+| `TIMEZONE` | no | default `Asia/Tashkent` |
+| `DEFAULT_TARGET_LANG` | no | default `it` |
 
-AI-провайдеры выстраиваются в цепочку **Groq → OpenAI → Gemini**. Участвуют те, для которых задан ключ. Если один провайдер упал, упёрся в лимит или вернул битый ответ, бот за секунду переключается на следующий.
-| `DANBOORU_LOGIN`, `DANBOORU_API_KEY` | нет | аккаунт Danbooru для поиска артов (My Account → API Key). Без него, а также если Danbooru блокирует IP сервера (часто `403` для дата-центров), арты ищутся на Safebooru |
-| `DATABASE_URL` | нет | по умолчанию `sqlite+aiosqlite:///data/bot.db` |
-| `TIMEZONE` | нет | по умолчанию `Asia/Tashkent` |
-| `DEFAULT_TARGET_LANG` | нет | по умолчанию `it` |
+AI providers form a chain: **Groq → OpenAI → Gemini**. Only providers with a key take part. If one is down, rate-limited, or returns a broken answer, the bot moves on to the next one right away.
 
-Тесты: `pytest`.
+Tests: `pytest`.
 
-Новая миграция после изменения моделей:
+To create a migration after changing the models:
 
 ```bash
-alembic revision --autogenerate -m "что поменялось"
+alembic revision --autogenerate -m "what changed"
 ```
 
-## Деплой (push в main → сервер)
+## Deployment (push to main → server)
 
-`git push` в `main` запускает GitHub Actions:
-1. прогоняет тесты (они же запускаются для pull request'ов);
-2. собирает Docker-образ и публикует его в GHCR (`ghcr.io/<owner>/<repo>:<commit>`);
-3. по SSH просит сервер обновиться до этого коммита. На сервере `scripts/deploy.sh` подтягивает код, скачивает образ и перезапускает контейнер. Если новая версия не поднялась, он откатывается на предыдущую.
+A `git push` to `main` runs GitHub Actions:
+1. **Test.** Runs the test suite (pull requests run the tests too).
+2. **Build.** Builds the Docker image and publishes it to GHCR (`ghcr.io/<owner>/<repo>:<commit>`).
+3. **Deploy.** Asks the server over SSH to update to that commit. On the server, `scripts/deploy.sh` pulls the code, downloads the image and restarts the container. If the new version doesn't come up, it rolls back to the previous one.
 
-### Настройка (один раз)
+### One-time setup
 
-**На сервере** (Docker уже установлен):
+**On the server** (with Docker installed):
 ```bash
 git clone https://github.com/<owner>/<repo>.git ~/lang-lrn-bot
-nano ~/lang-lrn-bot/.env          # ключи бота, как в .env.example
+nano ~/lang-lrn-bot/.env          # bot keys, as in .env.example
 ```
-Отдельный deploy-ключ добавить в `~/.ssh/authorized_keys` **с ограничением**. Тогда он может только запустить деплой:
+Add a separate deploy key to `~/.ssh/authorized_keys` **with a restriction**, so it can do nothing but trigger a deploy:
 ```
 command="/home/ubuntu/lang-lrn-bot/scripts/deploy.sh",restrict ssh-ed25519 AAAA... github-deploy
 ```
 
-**На GitHub:**
-- Settings → Environments → `production`: Deployment branches → только `main`; там же секреты:
+**On GitHub:**
+- Go to Settings → Environments → `production` and limit Deployment branches to `main`. Add these secrets there:
 
-  | Секрет | Значение |
+  | Secret | Value |
   |---|---|
-  | `VPS_HOST` | IP сервера |
-  | `VPS_USER` | пользователь, например `ubuntu` |
-  | `VPS_SSH_KEY` | приватная часть deploy-ключа |
-  | `VPS_KNOWN_HOSTS` | вывод `ssh-keyscan <IP>` |
-- После первой сборки: Packages → образ → Package settings → **Change visibility → Public**. Сервер скачивает образ без токенов.
+  | `VPS_HOST` | server IP |
+  | `VPS_USER` | user, e.g. `ubuntu` |
+  | `VPS_SSH_KEY` | private part of the deploy key |
+  | `VPS_KNOWN_HOSTS` | output of `ssh-keyscan <IP>` |
+- After the first build, go to Packages → the image → Package settings → **Change visibility → Public**. The server then pulls the image without any token.
 
-### Восстановление из бэкапа
+### Restoring from a backup
 
-Бот каждый день присылает владельцу `lang-lrn-bot-ГГГГ-ММ-ДД.db.gz`. Чтобы восстановить базу на сервере:
+Every day the bot sends the owner a `lang-lrn-bot-YYYY-MM-DD.db.gz` file. To restore it on the server:
 ```bash
 gunzip lang-lrn-bot-2026-11-20.db.gz
 cd ~/lang-lrn-bot && docker compose stop bot
@@ -101,14 +114,18 @@ docker run --rm -v lang-lrn-bot_bot-data:/data -v "$PWD":/src alpine \
 docker compose start bot
 ```
 
-## Безопасность
+## Security
 
-- **Ключи бота и AI** лежат только в `.env` на сервере. В репозитории и GitHub Secrets их нет, `.env` в `.gitignore`.
-- **Бот отвечает только владельцу** (`OWNER_ID`): чужие люди не могут тратить твои лимиты.
-- **Deploy-ключ** привязан на сервере к `scripts/deploy.sh` (`command=…,restrict`): ни консоли, ни проброса портов. Скрипт принимает только `deploy <sha>` и разворачивает только коммиты из `origin/main`.
-- **Секреты деплоя** лежат в environment `production`, доступном только ветке `main`. Pull request'ы, в том числе из форков, запускают лишь тесты и секретов не видят.
-- **Права workflow** минимальные (`contents: read`). Запись в GHCR есть только у шага сборки.
-- **Dependabot** раз в неделю предлагает обновления зависимостей, Actions и базового образа.
-- **Контейнер** работает под непривилегированным пользователем.
+- **Bot and AI keys** live only in `.env` on the server. They are not in the repository or in GitHub Secrets, and `.env` is in `.gitignore`.
+- **The bot answers only its owner** (`OWNER_ID`), so strangers can't use up your API limits.
+- **The deploy key** is locked to `scripts/deploy.sh` on the server (`command=…,restrict`): no shell and no port forwarding. The script accepts only `deploy <sha>` and deploys only commits that are on `origin/main`.
+- **Deploy secrets** are in the `production` environment, which only the `main` branch can use. Pull requests, including those from forks, only run the tests and never see the secrets.
+- **Workflow permissions** are minimal (`contents: read`); only the build step can write to GHCR.
+- **Dependabot** proposes weekly updates for dependencies, Actions and the base image.
+- **The container** runs as an unprivileged user.
 
-Нашли уязвимость? Напишите владельцу репозитория лично, а не в публичный issue.
+Found a vulnerability? Please contact the repository owner privately instead of opening a public issue.
+
+## License
+
+[MIT](LICENSE)
